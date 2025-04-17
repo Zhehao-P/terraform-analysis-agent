@@ -5,7 +5,7 @@ import os
 # These aren't being used right now but Mem0 does support adding custom prompting
 # for handling memory retrieval and processing.
 CUSTOM_INSTRUCTIONS = """
-Extract the Following Information:  
+Extract the Following Information:
 
 - Key Information: Identify and save the most important details.
 - Context: Capture the surrounding context to understand the memory's relevance.
@@ -20,10 +20,10 @@ def get_mem0_client():
     llm_api_key = os.getenv('LLM_API_KEY')
     llm_model = os.getenv('LLM_CHOICE')
     embedding_model = os.getenv('EMBEDDING_MODEL_CHOICE')
-    
+
     # Initialize config dictionary
     config = {}
-    
+
     # Configure LLM based on provider
     if llm_provider == 'openai' or llm_provider == 'openrouter':
         config["llm"] = {
@@ -34,15 +34,15 @@ def get_mem0_client():
                 "max_tokens": 2000,
             }
         }
-        
+
         # Set API key in environment if not already set
         if llm_api_key and not os.environ.get("OPENAI_API_KEY"):
             os.environ["OPENAI_API_KEY"] = llm_api_key
-            
+
         # For OpenRouter, set the specific API key
         if llm_provider == 'openrouter' and llm_api_key:
             os.environ["OPENROUTER_API_KEY"] = llm_api_key
-    
+
     elif llm_provider == 'ollama':
         config["llm"] = {
             "provider": "ollama",
@@ -52,12 +52,12 @@ def get_mem0_client():
                 "max_tokens": 2000,
             }
         }
-        
+
         # Set base URL for Ollama if provided
         llm_base_url = os.getenv('LLM_BASE_URL')
         if llm_base_url:
             config["llm"]["config"]["ollama_base_url"] = llm_base_url
-    
+
     # Configure embedder based on provider
     if llm_provider == 'openai':
         config["embedder"] = {
@@ -67,11 +67,11 @@ def get_mem0_client():
                 "embedding_dims": 1536  # Default for text-embedding-3-small
             }
         }
-        
+
         # Set API key in environment if not already set
         if llm_api_key and not os.environ.get("OPENAI_API_KEY"):
             os.environ["OPENAI_API_KEY"] = llm_api_key
-    
+
     elif llm_provider == 'ollama':
         config["embedder"] = {
             "provider": "ollama",
@@ -80,12 +80,12 @@ def get_mem0_client():
                 "embedding_dims": 768  # Default for nomic-embed-text
             }
         }
-        
+
         # Set base URL for Ollama if provided
         embedding_base_url = os.getenv('LLM_BASE_URL')
         if embedding_base_url:
             config["embedder"]["config"]["ollama_base_url"] = embedding_base_url
-    
+
     # Configure Supabase vector store
     config["vector_store"] = {
         "provider": "supabase",
@@ -97,6 +97,6 @@ def get_mem0_client():
     }
 
     # config["custom_fact_extraction_prompt"] = CUSTOM_INSTRUCTIONS
-    
+
     # Create and return the Memory client
     return Memory.from_config(config)

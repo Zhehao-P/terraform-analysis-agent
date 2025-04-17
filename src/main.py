@@ -25,16 +25,16 @@ class Mem0Context:
 async def mem0_lifespan(server: FastMCP) -> AsyncIterator[Mem0Context]:
     """
     Manages the Mem0 client lifecycle.
-    
+
     Args:
         server: The FastMCP server instance
-        
+
     Yields:
         Mem0Context: The context containing the Mem0 client
     """
     # Create and return the Memory client with the helper function in utils.py
     mem0_client = get_mem0_client()
-    
+
     try:
         yield Mem0Context(mem0_client=mem0_client)
     finally:
@@ -48,7 +48,7 @@ mcp = FastMCP(
     lifespan=mem0_lifespan,
     host=os.getenv("HOST", "0.0.0.0"),
     port=os.getenv("PORT", "8050")
-)        
+)
 
 @mcp.tool()
 async def save_memory(ctx: Context, text: str) -> str:
@@ -72,7 +72,7 @@ async def save_memory(ctx: Context, text: str) -> str:
 @mcp.tool()
 async def get_all_memories(ctx: Context) -> str:
     """Get all stored memories for the user.
-    
+
     Call this tool when you need complete context of all previously memories.
 
     Args:
