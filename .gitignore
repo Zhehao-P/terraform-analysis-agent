@@ -8,3 +8,11 @@ __pycache__/
 
 # IDE
 .vscode/
+
+# Data
+data/chromadb/*
+data/cache/*
+data/github/*
+!data/chromadb/.gitkeep
+!data/cache/.gitkeep
+!data/github/.gitkeep

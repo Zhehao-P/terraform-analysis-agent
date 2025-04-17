@@ -2,126 +2,140 @@ from mcp.server.fastmcp import FastMCP, Context
 from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from dotenv import load_dotenv
-from mem0 import Memory
-import asyncio
-import json
+import chromadb
+from git import Repo
 import os
+import asyncio
+from pathlib import Path
+from .config import (
+    CHROMA_DB_DIR,
+    GITHUB_DIR,
+    PROCESS_FILE_EXTENSIONS,
+    DEFAULT_HOST,
+    DEFAULT_PORT,
+    CHROMA_COLLECTION_NAME,
+    CHROMA_COLLECTION_METADATA
+)
 
-from utils import get_mem0_client
-
-load_dotenv()
-
-# Default user ID for memory operations
-DEFAULT_USER_ID = "user"
-
-# Create a dataclass for our application context
 @dataclass
-class Mem0Context:
-    """Context for the Mem0 MCP server."""
-    mem0_client: Memory
+class RepoContext:
+    """Context for managing repository content storage and retrieval."""
+    chroma_client: chromadb.Client
+    collection: chromadb.Collection
 
 @asynccontextmanager
-async def mem0_lifespan(server: FastMCP) -> AsyncIterator[Mem0Context]:
-    """
-    Manages the Mem0 client lifecycle.
+async def mcp_lifespan(server: FastMCP) -> AsyncIterator[RepoContext]:
+    """Manages the MCP agent lifecycle including ChromaDB persistence.
 
-    Args:
-        server: The FastMCP server instance
-
-    Yields:
-        Mem0Context: The context containing the Mem0 client
+    This function:
+    1. Uses the configured ChromaDB directory
+    2. Initializes ChromaDB with persistent storage
+    3. Creates or loads the collection
+    4. Handles cleanup on shutdown
     """
-    # Create and return the Memory client with the helper function in utils.py
-    mem0_client = get_mem0_client()
+    # Initialize ChromaDB with persistent storage
+    chroma_client = chromadb.PersistentClient(path=str(CHROMA_DB_DIR))
+
+    # Create or get the collection for repository files
+    collection = chroma_client.get_or_create_collection(
+        name=CHROMA_COLLECTION_NAME,
+        metadata=CHROMA_COLLECTION_METADATA
+    )
 
     try:
-        yield Mem0Context(mem0_client=mem0_client)
+        yield RepoContext(chroma_client=chroma_client, collection=collection)
     finally:
-        # No explicit cleanup needed for the Mem0 client
-        pass
+        # Ensure all data is written to disk
+        chroma_client.persist()
 
-# Initialize FastMCP server with the Mem0 client as context
+# Initialize FastMCP server
 mcp = FastMCP(
-    "mcp-mem0",
-    description="MCP server for long term memory storage and retrieval with Mem0",
-    lifespan=mem0_lifespan,
-    host=os.getenv("HOST", "0.0.0.0"),
-    port=os.getenv("PORT", "8050")
+    "repo-analysis-agent",
+    description="MCP server for repository content analysis using RAG",
+    lifespan=mcp_lifespan,
+    host=os.getenv("HOST", DEFAULT_HOST),
+    port=os.getenv("PORT", DEFAULT_PORT)
 )
 
 @mcp.tool()
-async def save_memory(ctx: Context, text: str) -> str:
-    """Save information to your long-term memory.
-
-    This tool is designed to store any type of information that might be useful in the future.
-    The content will be processed and indexed for later retrieval through semantic search.
+async def ingest_github_repo(ctx: Context, repo_url: str) -> str:
+    """Ingest a GitHub repository containing Terraform configurations.
 
     Args:
-        ctx: The MCP server provided context which includes the Mem0 client
-        text: The content to store in memory, including any relevant details and context
+        ctx: The MCP server context
+        repo_url: URL of the GitHub repository to ingest
     """
     try:
-        mem0_client = ctx.request_context.lifespan_context.mem0_client
-        messages = [{"role": "user", "content": text}]
-        mem0_client.add(messages, user_id=DEFAULT_USER_ID)
-        return f"Successfully saved memory: {text[:100]}..." if len(text) > 100 else f"Successfully saved memory: {text}"
+        # Extract repo name from URL for cache directory
+        repo_name = repo_url.split('/')[-1].replace('.git', '')
+        repo_cache_dir = GITHUB_DIR / repo_name
+
+        # If repo is already cached, update it; otherwise clone
+        if repo_cache_dir.exists():
+            repo = Repo(str(repo_cache_dir))
+            repo.remotes.origin.pull()  # Update the cached repo
+        else:
+            # Clone directly into the cache directory
+            repo = Repo.clone_from(repo_url, str(repo_cache_dir))
+
+        # Process repository files
+        documents = []
+        metadatas = []
+        ids = []
+
+        for root, _, files in os.walk(str(repo_cache_dir)):
+            for file in files:
+                if Path(file).suffix in PROCESS_FILE_EXTENSIONS:
+                    file_path = os.path.join(root, file)
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        content = f.read()
+                        relative_path = file_path[len(str(repo_cache_dir)):]  # Relative path
+                        documents.append(content)
+                        metadatas.append({'path': relative_path})
+                        ids.append(relative_path)
+
+        # Store in ChromaDB in a single batch
+        if documents:
+            ctx.request_context.lifespan_context.collection.add(
+                documents=documents,
+                metadatas=metadatas,
+                ids=ids
+            )
+
+        return f"Successfully ingested {len(documents)} files from {repo_url}"
     except Exception as e:
-        return f"Error saving memory: {str(e)}"
+        return f"Error ingesting repository: {str(e)}"
 
 @mcp.tool()
-async def get_all_memories(ctx: Context) -> str:
-    """Get all stored memories for the user.
-
-    Call this tool when you need complete context of all previously memories.
+async def analyze_error(ctx: Context, error_message: str) -> str:
+    """Analyze a Terraform error message using the ingested documentation.
 
     Args:
-        ctx: The MCP server provided context which includes the Mem0 client
-
-    Returns a JSON formatted list of all stored memories, including when they were created
-    and their content. Results are paginated with a default of 50 items per page.
+        ctx: The MCP server context
+        error_message: The Terraform error message to analyze
     """
     try:
-        mem0_client = ctx.request_context.lifespan_context.mem0_client
-        memories = mem0_client.get_all(user_id=DEFAULT_USER_ID)
-        if isinstance(memories, dict) and "results" in memories:
-            flattened_memories = [memory["memory"] for memory in memories["results"]]
-        else:
-            flattened_memories = memories
-        return json.dumps(flattened_memories, indent=2)
+        # Search for relevant documentation
+        results = ctx.request_context.lifespan_context.collection.query(
+            query_texts=[error_message],
+            n_results=3
+        )
+
+        # Format the response
+        response = "Found relevant documentation:\n\n"
+        for i, (doc, metadata) in enumerate(zip(results['documents'][0], results['metadatas'][0]), 1):
+            response += f"{i}. File: {metadata['path']}\n"
+            response += f"Content:\n{doc}\n\n"
+
+        return response
     except Exception as e:
-        return f"Error retrieving memories: {str(e)}"
-
-@mcp.tool()
-async def search_memories(ctx: Context, query: str, limit: int = 3) -> str:
-    """Search memories using semantic search.
-
-    This tool should be called to find relevant information from your memory. Results are ranked by relevance.
-    Always search your memories before making decisions to ensure you leverage your existing knowledge.
-
-    Args:
-        ctx: The MCP server provided context which includes the Mem0 client
-        query: Search query string describing what you're looking for. Can be natural language.
-        limit: Maximum number of results to return (default: 3)
-    """
-    try:
-        mem0_client = ctx.request_context.lifespan_context.mem0_client
-        memories = mem0_client.search(query, user_id=DEFAULT_USER_ID, limit=limit)
-        if isinstance(memories, dict) and "results" in memories:
-            flattened_memories = [memory["memory"] for memory in memories["results"]]
-        else:
-            flattened_memories = memories
-        return json.dumps(flattened_memories, indent=2)
-    except Exception as e:
-        return f"Error searching memories: {str(e)}"
+        return f"Error analyzing error: {str(e)}"
 
 async def main():
     transport = os.getenv("TRANSPORT", "sse")
     if transport == 'sse':
-        # Run the MCP server with sse transport
         await mcp.run_sse_async()
     else:
-        # Run the MCP server with stdio transport
         await mcp.run_stdio_async()
 
 if __name__ == "__main__":
