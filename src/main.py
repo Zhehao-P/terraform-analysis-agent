@@ -22,7 +22,6 @@ from utils import get_chromadb_client
 class RepoContext:
     """Context for managing repository content storage and retrieval."""
     chroma_client: chromadb.Client
-    collection: chromadb.Collection
 
 @asynccontextmanager
 async def mcp_lifespan(server: FastMCP) -> AsyncIterator[RepoContext]:
@@ -35,14 +34,14 @@ async def mcp_lifespan(server: FastMCP) -> AsyncIterator[RepoContext]:
     4. Handles cleanup on shutdown
     """
     # Create and initialize the ChromaDB client with the helper function
-    chroma_client, collection = get_chromadb_client(
+    chroma_client = get_chromadb_client(
         CHROMA_DB_DIR,
         CHROMA_COLLECTION_NAME,
         CHROMA_COLLECTION_METADATA
     )
 
     try:
-        yield RepoContext(chroma_client=chroma_client, collection=collection)
+        yield RepoContext(chroma_client=chroma_client)
     finally:
         # Ensure all data is written to disk
         chroma_client.persist()
@@ -65,6 +64,11 @@ async def ingest_github_repo(ctx: Context, repo_url: str) -> str:
         repo_url: URL of the GitHub repository to ingest
     """
     try:
+        # Get the collection
+        collection = ctx.request_context.lifespan_context.chroma_client.get_collection(
+            name=CHROMA_COLLECTION_NAME
+        )
+
         # Extract repo name from URL for cache directory
         repo_name = repo_url.split('/')[-1].replace('.git', '')
         repo_cache_dir = GITHUB_DIR / repo_name
@@ -95,7 +99,7 @@ async def ingest_github_repo(ctx: Context, repo_url: str) -> str:
 
         # Store in ChromaDB in a single batch
         if documents:
-            ctx.request_context.lifespan_context.collection.add(
+            collection.add(
                 documents=documents,
                 metadatas=metadatas,
                 ids=ids
@@ -114,8 +118,13 @@ async def analyze_error(ctx: Context, error_message: str) -> str:
         error_message: The Terraform error message to analyze
     """
     try:
+        # Get the collection
+        collection = ctx.request_context.lifespan_context.chroma_client.get_collection(
+            name=CHROMA_COLLECTION_NAME
+        )
+
         # Search for relevant documentation
-        results = ctx.request_context.lifespan_context.collection.query(
+        results = collection.query(
             query_texts=[error_message],
             n_results=3
         )

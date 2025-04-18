@@ -24,7 +24,7 @@ def get_chromadb_client(db_path, collection_name, collection_metadata=None):
         collection_metadata: Optional metadata for the collection
 
     Returns:
-        tuple: (chroma_client, collection)
+        chromadb.Client: The configured ChromaDB client
 
     Raises:
         ValueError: If required API configuration is missing
@@ -50,18 +50,22 @@ def get_chromadb_client(db_path, collection_name, collection_metadata=None):
     embedding_func = OpenAIEmbeddingFunction(
         api_key=api_key,
         api_base=api_base,
-        model_name=embedding_model,
+        model_name=embedding_model
     )
 
     # Initialize ChromaDB with persistent storage
     chroma_client = chromadb.PersistentClient(path=str(db_path))
 
-    # Create or get the collection
+    # Validate collection - make sure it can be created or accessed
     metadata = collection_metadata or {}
-    collection = chroma_client.get_or_create_collection(
-        name=collection_name,
-        metadata=metadata,
-        embedding_function=embedding_func
-    )
+    try:
+        chroma_client.get_or_create_collection(
+            name=collection_name,
+            metadata=metadata,
+            embedding_function=embedding_func
+        )
+    except Exception as e:
+        raise ValueError(f"Failed to create or access collection '{collection_name}': {str(e)}")
 
-    return chroma_client, collection
+    # Return only the client
+    return chroma_client
