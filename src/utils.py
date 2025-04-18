@@ -12,14 +12,21 @@ def setup_logging(module_name="terraform-analysis"):
     Returns:
         A configured logger instance
     """
-    # Only configure if root logger doesn't have handlers yet
+    # Check if DEBUG environment variable is set
+    debug_mode = os.getenv('DEBUG') is not None
+    log_level = logging.DEBUG if debug_mode else logging.INFO
+    
+    # Configure logging
     if not logging.getLogger().handlers:
         logging.basicConfig(
-            level=logging.INFO,
+            level=log_level,
             format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
         )
     
-    return logging.getLogger(module_name)
+    # Get the logger and ensure it has the right level
+    logger = logging.getLogger(module_name)
+    logger.setLevel(log_level)
+    return logger
 
 # Get logger
 logger = setup_logging()

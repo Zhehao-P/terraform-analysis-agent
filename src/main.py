@@ -91,6 +91,7 @@ async def ingest_github_repo(ctx: Context) -> str:
         total_skipped = 0
         total_updated = 0
         processed_repos = 0
+        test_skipped = 0
         
         # Get all directories in the github directory
         repo_dirs = [d for d in GITHUB_DIR.iterdir() if d.is_dir()]
@@ -112,12 +113,19 @@ async def ingest_github_repo(ctx: Context) -> str:
             ids = []
             skipped = 0
             updated = 0
+            repo_test_skipped = 0
 
             for root, _, files in os.walk(str(repo_dir)):
                 for file in files:
                     if Path(file).suffix in PROCESS_FILE_EXTENSIONS:
                         file_path = os.path.join(root, file)
                         relative_path = os.path.relpath(file_path, str(repo_dir))
+                        
+                        # Skip test files
+                        if "test" in relative_path.lower():
+                            repo_test_skipped += 1
+                            logger.debug(f"Skipping test file: {relative_path}")
+                            continue
                         
                         # Create a unique ID that includes the repo name to avoid conflicts
                         file_id = f"{repo_name}/{relative_path}"
@@ -172,23 +180,24 @@ async def ingest_github_repo(ctx: Context) -> str:
                 total_documents += len(documents)
                 total_skipped += skipped
                 total_updated += updated
+                test_skipped += repo_test_skipped
                 processed_repos += 1
                 
                 repo_end_time = datetime.datetime.now()
                 duration = (repo_end_time - repo_start_time).total_seconds()
-                logger.info(f"Repository '{repo_name}' processed in {duration:.2f} seconds: {len(documents)} files added, {updated} updated, {skipped} skipped")
+                logger.info(f"Repository '{repo_name}' processed in {duration:.2f} seconds: {len(documents)} files added, {updated} updated, {skipped} skipped, {repo_test_skipped} test files skipped")
             else:
-                logger.info(f"No documents to add from repository {repo_name}")
+                logger.info(f"No documents to add from repository {repo_name} ({repo_test_skipped} test files skipped)")
 
         end_time = datetime.datetime.now()
         duration = (end_time - start_time).total_seconds()
         
         if total_documents > 0:
-            result_msg = f"Local knowledge base updated: {processed_repos} repositories processed, {total_documents} total files indexed, {total_updated} updated, {total_skipped} skipped (unchanged). Completed in {duration:.2f} seconds."
+            result_msg = f"Local knowledge base updated: {processed_repos} repositories processed, {total_documents} total files indexed, {total_updated} updated, {total_skipped} skipped (unchanged), {test_skipped} test files skipped. Completed in {duration:.2f} seconds."
             logger.info(result_msg)
             return result_msg
         else:
-            result_msg = f"No new or modified files found in any local repository. Supported extensions: {', '.join(PROCESS_FILE_EXTENSIONS)}. Process completed in {duration:.2f} seconds."
+            result_msg = f"No new or modified files found in any local repository. Supported extensions: {', '.join(PROCESS_FILE_EXTENSIONS)}. {test_skipped} test files were skipped. Process completed in {duration:.2f} seconds."
             logger.info(result_msg)
             return result_msg
     except Exception as e:
