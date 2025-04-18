@@ -1,9 +1,6 @@
 import os
 import chromadb
 
-# Custom instructions for memory processing
-# These aren't being used right now but Mem0 does support adding custom prompting
-# for handling memory retrieval and processing.
 CUSTOM_INSTRUCTIONS = """
 Extract the Following Information:
 
