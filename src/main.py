@@ -142,8 +142,10 @@ async def analyze_error(ctx: Context, error_message: str) -> str:
 async def main():
     transport = os.getenv("TRANSPORT", "sse")
     if transport == 'sse':
+        print(f"🚀 MCP server starting at http://{DEFAULT_HOST}:{DEFAULT_PORT} using SSE transport")
         await mcp.run_sse_async()
     else:
+        print(f"🚀 MCP server starting at http://{DEFAULT_HOST}:{DEFAULT_PORT} using STDIO transport")
         await mcp.run_stdio_async()
 
 if __name__ == "__main__":

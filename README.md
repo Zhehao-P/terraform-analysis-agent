@@ -35,21 +35,28 @@ The server provides two essential tools:
    cd terraform-analysis-agent
    ```
 
-2. Install dependencies with uv:
+2. Create and activate a virtual environment with uv:
    ```bash
-   # Install uv if you don't have it
-   pip install uv
+   # Create virtual environment with Python 3.12
+   uv venv --python=3.12
+   
+   # Activate virtual environment
+   source .venv/bin/activate  # On Unix/macOS
+   # or
+   .venv\Scripts\activate  # On Windows
+   ```
 
-   # Install project dependencies
+3. Install dependencies with uv:
+   ```bash
    uv pip install -e .
    ```
 
-3. Create a `.env` file based on `.env.example`:
+4. Create a `.env` file based on `.env.example`:
    ```bash
    cp .env.example .env
    ```
 
-4. Configure your API keys in the `.env` file (see Configuration section)
+5. Configure your API keys in the `.env` file (see Configuration section)
 
 ### Using Docker (Recommended)
 
