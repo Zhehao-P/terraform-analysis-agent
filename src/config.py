@@ -19,7 +19,7 @@ PROCESS_FILE_EXTENSIONS = {'.tf', '.go'}
 
 # Server configuration
 DEFAULT_HOST = "0.0.0.0"
-DEFAULT_PORT = "8050"
+DEFAULT_PORT = 8050
 
 # ChromaDB configuration
 CHROMA_COLLECTION_NAME = "repo_files"

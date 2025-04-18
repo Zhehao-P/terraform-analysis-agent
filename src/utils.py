@@ -1,6 +1,5 @@
 import os
 import chromadb
-import openai
 
 # Custom instructions for memory processing
 # These aren't being used right now but Mem0 does support adding custom prompting
@@ -45,15 +44,13 @@ def get_chromadb_client(db_path, collection_name, collection_metadata=None):
     if not embedding_model:
         raise ValueError("EMBEDDING_MODEL_CHOICE environment variable must be set")
 
-    # Configure OpenAI globally
-    openai.api_key = api_key
-    openai.base_url = api_base
-
     # Create OpenAI embedding function
     from chromadb.utils.embedding_functions import OpenAIEmbeddingFunction
 
     embedding_func = OpenAIEmbeddingFunction(
-        model_name=embedding_model
+        api_key=api_key,
+        api_base=api_base,
+        model_name=embedding_model,
     )
 
     # Initialize ChromaDB with persistent storage
