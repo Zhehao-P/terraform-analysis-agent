@@ -64,12 +64,20 @@ async def ingest_github_repo(ctx: Context, repo_url: str) -> str:
     
     Args:
         ctx: The MCP server context (automatically provided, no need to specify)
-        repo_url: Full URL of the GitHub repository to ingest (e.g., "https://github.com/username/repo")
+        repo_url: Full HTTPS URL of the GitHub repository to ingest (e.g., "https://github.com/username/repo")
         
     Returns:
         A success message with the number of files ingested, or an error message if the operation failed.
     """
     try:
+        # Verify the repo_url is a valid GitHub HTTPS URL
+        if not repo_url.startswith('https://github.com/'):
+            return "Error: Repository URL must be a valid HTTPS GitHub URL (https://github.com/username/repo)"
+            
+        # Get GitHub token - it's already available in the environment from .env file
+        if not os.getenv('GITHUB_TOKEN'):
+            return "Error: No valid GITHUB_TOKEN found in environment variables. Please check your .env file."
+            
         # Get the collection
         collection = ctx.request_context.lifespan_context.chroma_client.get_collection(
             name=CHROMA_COLLECTION_NAME
@@ -79,14 +87,18 @@ async def ingest_github_repo(ctx: Context, repo_url: str) -> str:
         repo_name = repo_url.split('/')[-1].replace('.git', '')
         repo_cache_dir = GITHUB_DIR / repo_name
 
+        # Disable Git terminal prompts
+        os.environ['GIT_TERMINAL_PROMPT'] = '0'
+
         # If repo is already cached, update it; otherwise clone
         if repo_cache_dir.exists():
             repo = Repo(str(repo_cache_dir))
-            repo.remotes.origin.pull()  # Update the cached repo
+            # Pull with current environment (which already has GITHUB_TOKEN)
+            repo.remotes.origin.pull()
         else:
-            # Clone directly into the cache directory
+            # Clone with current environment (which already has GITHUB_TOKEN)
             repo = Repo.clone_from(repo_url, str(repo_cache_dir))
-
+            
         # Process repository files
         documents = []
         metadatas = []
