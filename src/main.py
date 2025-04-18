@@ -56,76 +56,111 @@ mcp = FastMCP(
 )
 
 @mcp.tool()
-async def ingest_github_repo(ctx: Context, repo_url: str) -> str:
-    """Ingest a GitHub repository to build a searchable knowledge base.
+async def ingest_github_repo(ctx: Context) -> str:
+    """Build a searchable knowledge base from local repositories.
     
-    This tool clones a GitHub repository, processes the code files, and indexes them for semantic search.
-    The indexed files can later be used to find relevant code snippets when debugging errors or answering questions.
+    This tool scans all local repositories in the data/github directory and indexes their Terraform and Go files.
+    It builds a local vector database that enables semantic search for code snippets when debugging errors.
+    The tool automatically handles incremental updates - only new or modified files will be processed.
+    
+    No parameters needed - all repositories in the data/github directory will be automatically processed.
     
     Args:
         ctx: The MCP server context (automatically provided, no need to specify)
-        repo_url: Full HTTPS URL of the GitHub repository to ingest (e.g., "https://github.com/username/repo")
         
     Returns:
-        A success message with the number of files ingested, or an error message if the operation failed.
+        A summary of the ingestion process, including counts of indexed, updated, and skipped files.
     """
     try:
-        # Verify the repo_url is a valid GitHub HTTPS URL
-        if not repo_url.startswith('https://github.com/'):
-            return "Error: Repository URL must be a valid HTTPS GitHub URL (https://github.com/username/repo)"
-            
-        # Get GitHub token - it's already available in the environment from .env file
-        if not os.getenv('GITHUB_TOKEN'):
-            return "Error: No valid GITHUB_TOKEN found in environment variables. Please check your .env file."
-            
         # Get the collection
         collection = ctx.request_context.lifespan_context.chroma_client.get_collection(
             name=CHROMA_COLLECTION_NAME
         )
+        
+        # Process all repositories in the github directory
+        total_documents = 0
+        total_skipped = 0
+        total_updated = 0
+        processed_repos = 0
+        
+        # Get all directories in the github directory
+        repo_dirs = [d for d in GITHUB_DIR.iterdir() if d.is_dir()]
+        
+        if not repo_dirs:
+            return f"No local repositories found in {GITHUB_DIR}. Please add repositories to this directory."
+        
+        # Process each repository
+        for repo_dir in repo_dirs:
+            repo_name = repo_dir.name
+            documents = []
+            metadatas = []
+            ids = []
+            skipped = 0
+            updated = 0
 
-        # Extract repo name from URL for cache directory
-        repo_name = repo_url.split('/')[-1].replace('.git', '')
-        repo_cache_dir = GITHUB_DIR / repo_name
+            for root, _, files in os.walk(str(repo_dir)):
+                for file in files:
+                    if Path(file).suffix in PROCESS_FILE_EXTENSIONS:
+                        file_path = os.path.join(root, file)
+                        relative_path = os.path.relpath(file_path, str(repo_dir))
+                        
+                        # Create a unique ID that includes the repo name to avoid conflicts
+                        file_id = f"{repo_name}/{relative_path}"
+                        
+                        # Get file last modification time
+                        last_modified = str(os.path.getmtime(file_path))
+                        
+                        # Check if file already exists in collection by querying for this specific ID
+                        existing_item = collection.get(ids=[file_id])
+                        
+                        # If the file exists in the database (ids list not empty)
+                        if existing_item['ids']:
+                            # Get metadata if available
+                            if existing_item['metadatas'] and existing_item['metadatas'][0]:
+                                existing_last_modified = existing_item['metadatas'][0].get('last_modified', '')
+                                
+                                # Compare timestamps
+                                if existing_last_modified == last_modified:
+                                    # File exists and hasn't changed, skip it
+                                    skipped += 1
+                                    continue
+                            
+                            # File exists but has changed (or no timestamp), update it
+                            updated += 1
+                            # Delete the old version
+                            collection.delete(ids=[file_id])
+                        
+                        # Process the file
+                        with open(file_path, 'r', encoding='utf-8') as f:
+                            content = f.read()
+                            documents.append(content)
+                            metadatas.append({
+                                'repo': repo_name,
+                                'path': relative_path,
+                                'full_path': file_id,
+                                'last_modified': last_modified
+                            })
+                            ids.append(file_id)
 
-        # Disable Git terminal prompts
-        os.environ['GIT_TERMINAL_PROMPT'] = '0'
+            # Store in ChromaDB in a single batch
+            if documents:
+                collection.add(
+                    documents=documents,
+                    metadatas=metadatas,
+                    ids=ids
+                )
+                total_documents += len(documents)
+                total_skipped += skipped
+                total_updated += updated
+                processed_repos += 1
+                print(f"Local repository '{repo_name}': {len(documents)} files processed, {updated} updated, {skipped} skipped.")
 
-        # If repo is already cached, update it; otherwise clone
-        if repo_cache_dir.exists():
-            repo = Repo(str(repo_cache_dir))
-            # Pull with current environment (which already has GITHUB_TOKEN)
-            repo.remotes.origin.pull()
+        if total_documents > 0:
+            return f"Local knowledge base updated: {processed_repos} repositories processed, {total_documents} total files indexed, {total_updated} updated, {total_skipped} skipped (unchanged)."
         else:
-            # Clone with current environment (which already has GITHUB_TOKEN)
-            repo = Repo.clone_from(repo_url, str(repo_cache_dir))
-            
-        # Process repository files
-        documents = []
-        metadatas = []
-        ids = []
-
-        for root, _, files in os.walk(str(repo_cache_dir)):
-            for file in files:
-                if Path(file).suffix in PROCESS_FILE_EXTENSIONS:
-                    file_path = os.path.join(root, file)
-                    with open(file_path, 'r', encoding='utf-8') as f:
-                        content = f.read()
-                        relative_path = file_path[len(str(repo_cache_dir)):]  # Relative path
-                        documents.append(content)
-                        metadatas.append({'path': relative_path})
-                        ids.append(relative_path)
-
-        # Store in ChromaDB in a single batch
-        if documents:
-            collection.add(
-                documents=documents,
-                metadatas=metadatas,
-                ids=ids
-            )
-
-        return f"Successfully ingested {len(documents)} files from {repo_url}"
+            return f"No new or modified files found in any local repository. Supported extensions: {', '.join(PROCESS_FILE_EXTENSIONS)}"
     except Exception as e:
-        return f"Error ingesting repository: {str(e)}"
+        return f"Error building knowledge base: {str(e)}"
 
 @mcp.tool()
 async def analyze_error(ctx: Context, error_message: str) -> str:
