@@ -6,6 +6,7 @@ import chromadb
 from git import Repo
 import os
 import asyncio
+import datetime
 from pathlib import Path
 from config import (
     CHROMA_DB_DIR,
@@ -16,7 +17,10 @@ from config import (
     CHROMA_COLLECTION_NAME,
     CHROMA_COLLECTION_METADATA
 )
-from utils import get_chromadb_client
+from utils import get_chromadb_client, setup_logging
+
+# Set up logging
+logger = setup_logging()
 
 @dataclass
 class RepoContext:
@@ -34,6 +38,7 @@ async def mcp_lifespan(server: FastMCP) -> AsyncIterator[RepoContext]:
     4. Handles cleanup on shutdown
     """
     # Create and initialize the ChromaDB client with the helper function
+    logger.info("Initializing ChromaDB client")
     chroma_client = get_chromadb_client(
         CHROMA_DB_DIR,
         CHROMA_COLLECTION_NAME,
@@ -44,6 +49,7 @@ async def mcp_lifespan(server: FastMCP) -> AsyncIterator[RepoContext]:
         yield RepoContext(chroma_client=chroma_client)
     finally:
         # No explicit persistence needed - PersistentClient handles this automatically
+        logger.info("Shutting down ChromaDB client")
         pass
 
 # Initialize FastMCP server
@@ -71,6 +77,9 @@ async def ingest_github_repo(ctx: Context) -> str:
     Returns:
         A summary of the ingestion process, including counts of indexed, updated, and skipped files.
     """
+    start_time = datetime.datetime.now()
+    logger.info(f"Starting knowledge base ingestion at {start_time}")
+    
     try:
         # Get the collection
         collection = ctx.request_context.lifespan_context.chroma_client.get_collection(
@@ -87,11 +96,17 @@ async def ingest_github_repo(ctx: Context) -> str:
         repo_dirs = [d for d in GITHUB_DIR.iterdir() if d.is_dir()]
         
         if not repo_dirs:
+            logger.warning(f"No local repositories found in {GITHUB_DIR}")
             return f"No local repositories found in {GITHUB_DIR}. Please add repositories to this directory."
+        
+        logger.info(f"Found {len(repo_dirs)} repositories to process in {GITHUB_DIR}")
         
         # Process each repository
         for repo_dir in repo_dirs:
             repo_name = repo_dir.name
+            repo_start_time = datetime.datetime.now()
+            logger.info(f"Processing repository: {repo_name}, started at {repo_start_time}")
+            
             documents = []
             metadatas = []
             ids = []
@@ -123,12 +138,16 @@ async def ingest_github_repo(ctx: Context) -> str:
                                 if existing_last_modified == last_modified:
                                     # File exists and hasn't changed, skip it
                                     skipped += 1
+                                    logger.debug(f"Skipping unchanged file: {file_id}")
                                     continue
                             
                             # File exists but has changed (or no timestamp), update it
                             updated += 1
+                            logger.debug(f"Updating modified file: {file_id}")
                             # Delete the old version
                             collection.delete(ids=[file_id])
+                        else:
+                            logger.debug(f"Processing new file: {file_id}")
                         
                         # Process the file
                         with open(file_path, 'r', encoding='utf-8') as f:
@@ -144,6 +163,7 @@ async def ingest_github_repo(ctx: Context) -> str:
 
             # Store in ChromaDB in a single batch
             if documents:
+                logger.info(f"Adding {len(documents)} documents to collection from repository {repo_name}")
                 collection.add(
                     documents=documents,
                     metadatas=metadatas,
@@ -153,13 +173,26 @@ async def ingest_github_repo(ctx: Context) -> str:
                 total_skipped += skipped
                 total_updated += updated
                 processed_repos += 1
-                print(f"Local repository '{repo_name}': {len(documents)} files processed, {updated} updated, {skipped} skipped.")
+                
+                repo_end_time = datetime.datetime.now()
+                duration = (repo_end_time - repo_start_time).total_seconds()
+                logger.info(f"Repository '{repo_name}' processed in {duration:.2f} seconds: {len(documents)} files added, {updated} updated, {skipped} skipped")
+            else:
+                logger.info(f"No documents to add from repository {repo_name}")
 
+        end_time = datetime.datetime.now()
+        duration = (end_time - start_time).total_seconds()
+        
         if total_documents > 0:
-            return f"Local knowledge base updated: {processed_repos} repositories processed, {total_documents} total files indexed, {total_updated} updated, {total_skipped} skipped (unchanged)."
+            result_msg = f"Local knowledge base updated: {processed_repos} repositories processed, {total_documents} total files indexed, {total_updated} updated, {total_skipped} skipped (unchanged). Completed in {duration:.2f} seconds."
+            logger.info(result_msg)
+            return result_msg
         else:
-            return f"No new or modified files found in any local repository. Supported extensions: {', '.join(PROCESS_FILE_EXTENSIONS)}"
+            result_msg = f"No new or modified files found in any local repository. Supported extensions: {', '.join(PROCESS_FILE_EXTENSIONS)}. Process completed in {duration:.2f} seconds."
+            logger.info(result_msg)
+            return result_msg
     except Exception as e:
+        logger.error(f"Error building knowledge base: {str(e)}", exc_info=True)
         return f"Error building knowledge base: {str(e)}"
 
 @mcp.tool()
@@ -209,7 +242,7 @@ async def main():
         exit(1)
         
     if transport == 'sse':
-        print(f"🚀 MCP server starting at http://{DEFAULT_HOST}:{DEFAULT_PORT} using SSE transport")
+        print(f"🚀 MCP server starting using SSE transport")
         await mcp.run_sse_async()
     elif transport == 'stdio':
         print(f"🚀 MCP server starting using STDIO transport")
