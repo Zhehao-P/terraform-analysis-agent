@@ -16,6 +16,7 @@ from .config import (
     CHROMA_COLLECTION_NAME,
     CHROMA_COLLECTION_METADATA
 )
+from .utils import get_chromadb_client
 
 @dataclass
 class RepoContext:
@@ -33,13 +34,11 @@ async def mcp_lifespan(server: FastMCP) -> AsyncIterator[RepoContext]:
     3. Creates or loads the collection
     4. Handles cleanup on shutdown
     """
-    # Initialize ChromaDB with persistent storage
-    chroma_client = chromadb.PersistentClient(path=str(CHROMA_DB_DIR))
-
-    # Create or get the collection for repository files
-    collection = chroma_client.get_or_create_collection(
-        name=CHROMA_COLLECTION_NAME,
-        metadata=CHROMA_COLLECTION_METADATA
+    # Create and initialize the ChromaDB client with the helper function
+    chroma_client, collection = get_chromadb_client(
+        CHROMA_DB_DIR,
+        CHROMA_COLLECTION_NAME,
+        CHROMA_COLLECTION_METADATA
     )
 
     try:

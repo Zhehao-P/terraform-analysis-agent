@@ -142,7 +142,7 @@ Once you have the server running with SSE transport, you can connect to it using
 > ```
 
 > **Note for n8n users**: Use host.docker.internal instead of localhost since n8n has to reach outside of it's own container to the host machine:
-> 
+>
 > So the full URL in the MCP node would be: http://host.docker.internal:8050/sse
 
 Make sure to update the port if you are using a value other than the default 8050.
@@ -178,14 +178,14 @@ Add this server to your MCP configuration for Claude Desktop, Windsurf, or any o
   "mcpServers": {
     "mem0": {
       "command": "docker",
-      "args": ["run", "--rm", "-i", 
-               "-e", "TRANSPORT", 
-               "-e", "LLM_PROVIDER", 
-               "-e", "LLM_BASE_URL", 
-               "-e", "LLM_API_KEY", 
-               "-e", "LLM_CHOICE", 
-               "-e", "EMBEDDING_MODEL_CHOICE", 
-               "-e", "DATABASE_URL", 
+      "args": ["run", "--rm", "-i",
+               "-e", "TRANSPORT",
+               "-e", "LLM_PROVIDER",
+               "-e", "LLM_BASE_URL",
+               "-e", "LLM_API_KEY",
+               "-e", "LLM_CHOICE",
+               "-e", "EMBEDDING_MODEL_CHOICE",
+               "-e", "DATABASE_URL",
                "mcp/mem0"],
       "env": {
         "TRANSPORT": "stdio",

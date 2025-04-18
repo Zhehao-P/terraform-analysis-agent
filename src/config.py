@@ -24,14 +24,3 @@ DEFAULT_PORT = "8050"
 # ChromaDB configuration
 CHROMA_COLLECTION_NAME = "repo_files"
 CHROMA_COLLECTION_METADATA = {"description": "Repository files and documentation"}
-
-# Ensure directories exist
-def ensure_directories():
-    """Create all required directories if they don't exist."""
-    DATA_DIR.mkdir(exist_ok=True)
-    CHROMA_DB_DIR.mkdir(exist_ok=True)
-    CACHE_DIR.mkdir(exist_ok=True)
-    GITHUB_DIR.mkdir(exist_ok=True)
-
-# Initialize directories
-ensure_directories()

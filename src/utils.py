@@ -1,5 +1,6 @@
-from mem0 import Memory
 import os
+import chromadb
+import openai
 
 # Custom instructions for memory processing
 # These aren't being used right now but Mem0 does support adding custom prompting
@@ -14,89 +15,56 @@ Extract the Following Information:
 - Source: Record where this information came from when applicable.
 """
 
-def get_mem0_client():
-    # Get LLM provider and configuration
-    llm_provider = os.getenv('LLM_PROVIDER')
-    llm_api_key = os.getenv('LLM_API_KEY')
-    llm_model = os.getenv('LLM_CHOICE')
+def get_chromadb_client(db_path, collection_name, collection_metadata=None):
+    """
+    Creates and returns a ChromaDB client with the configured embedding function.
+
+    Args:
+        db_path: Path to the ChromaDB database
+        collection_name: Name of the collection to use
+        collection_metadata: Optional metadata for the collection
+
+    Returns:
+        tuple: (chroma_client, collection)
+
+    Raises:
+        ValueError: If required API configuration is missing
+    """
+    # Get API configuration
+    api_key = os.getenv('LLM_API_KEY')
+    api_base = os.getenv('LLM_BASE_URL')
     embedding_model = os.getenv('EMBEDDING_MODEL_CHOICE')
 
-    # Initialize config dictionary
-    config = {}
+    # Validate required configuration
+    if not api_key:
+        raise ValueError("LLM_API_KEY environment variable must be set")
 
-    # Configure LLM based on provider
-    if llm_provider == 'openai' or llm_provider == 'openrouter':
-        config["llm"] = {
-            "provider": "openai",
-            "config": {
-                "model": llm_model,
-                "temperature": 0.2,
-                "max_tokens": 2000,
-            }
-        }
+    if not api_base:
+        raise ValueError("LLM_BASE_URL environment variable must be set")
 
-        # Set API key in environment if not already set
-        if llm_api_key and not os.environ.get("OPENAI_API_KEY"):
-            os.environ["OPENAI_API_KEY"] = llm_api_key
+    if not embedding_model:
+        raise ValueError("EMBEDDING_MODEL_CHOICE environment variable must be set")
 
-        # For OpenRouter, set the specific API key
-        if llm_provider == 'openrouter' and llm_api_key:
-            os.environ["OPENROUTER_API_KEY"] = llm_api_key
+    # Configure OpenAI globally
+    openai.api_key = api_key
+    openai.base_url = api_base
 
-    elif llm_provider == 'ollama':
-        config["llm"] = {
-            "provider": "ollama",
-            "config": {
-                "model": llm_model,
-                "temperature": 0.2,
-                "max_tokens": 2000,
-            }
-        }
+    # Create OpenAI embedding function
+    from chromadb.utils.embedding_functions import OpenAIEmbeddingFunction
 
-        # Set base URL for Ollama if provided
-        llm_base_url = os.getenv('LLM_BASE_URL')
-        if llm_base_url:
-            config["llm"]["config"]["ollama_base_url"] = llm_base_url
+    embedding_func = OpenAIEmbeddingFunction(
+        model_name=embedding_model
+    )
 
-    # Configure embedder based on provider
-    if llm_provider == 'openai':
-        config["embedder"] = {
-            "provider": "openai",
-            "config": {
-                "model": embedding_model or "text-embedding-3-small",
-                "embedding_dims": 1536  # Default for text-embedding-3-small
-            }
-        }
+    # Initialize ChromaDB with persistent storage
+    chroma_client = chromadb.PersistentClient(path=str(db_path))
 
-        # Set API key in environment if not already set
-        if llm_api_key and not os.environ.get("OPENAI_API_KEY"):
-            os.environ["OPENAI_API_KEY"] = llm_api_key
+    # Create or get the collection
+    metadata = collection_metadata or {}
+    collection = chroma_client.get_or_create_collection(
+        name=collection_name,
+        metadata=metadata,
+        embedding_function=embedding_func
+    )
 
-    elif llm_provider == 'ollama':
-        config["embedder"] = {
-            "provider": "ollama",
-            "config": {
-                "model": embedding_model or "nomic-embed-text",
-                "embedding_dims": 768  # Default for nomic-embed-text
-            }
-        }
-
-        # Set base URL for Ollama if provided
-        embedding_base_url = os.getenv('LLM_BASE_URL')
-        if embedding_base_url:
-            config["embedder"]["config"]["ollama_base_url"] = embedding_base_url
-
-    # Configure Supabase vector store
-    config["vector_store"] = {
-        "provider": "supabase",
-        "config": {
-            "connection_string": os.environ.get('DATABASE_URL', ''),
-            "collection_name": "mem0_memories",
-            "embedding_model_dims": 1536 if llm_provider == "openai" else 768
-        }
-    }
-
-    # config["custom_fact_extraction_prompt"] = CUSTOM_INSTRUCTIONS
-
-    # Create and return the Memory client
-    return Memory.from_config(config)
+    return chroma_client, collection
