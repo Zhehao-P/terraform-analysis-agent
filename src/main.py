@@ -7,7 +7,7 @@ from git import Repo
 import os
 import asyncio
 from pathlib import Path
-from .config import (
+from config import (
     CHROMA_DB_DIR,
     GITHUB_DIR,
     PROCESS_FILE_EXTENSIONS,
@@ -16,7 +16,7 @@ from .config import (
     CHROMA_COLLECTION_NAME,
     CHROMA_COLLECTION_METADATA
 )
-from .utils import get_chromadb_client
+from utils import get_chromadb_client
 
 @dataclass
 class RepoContext:

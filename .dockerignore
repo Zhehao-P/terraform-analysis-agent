@@ -1,1 +1,36 @@
+# Data directories
+data/
+
+# Git files
+.git/
+.gitignore
+.gitattributes
+
+# Python files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+env/
+venv/
+ENV/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Environment
 .env
+.env.*
+!.env.example
+
+# Logs
+*.log
+logs/
