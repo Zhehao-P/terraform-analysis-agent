@@ -30,17 +30,14 @@ EMBEDDING_MODEL_CHOICE=text-embedding-3-small
 ## Running the Container
 
 ```bash
-# Create data directories (first time only)
-mkdir -p data/chromadb data/cache data/github
-
 # Build the image
-docker build -t terraform-analysis-agent .
+docker build -t mcp/terraform-analysis-agent .
 
 # Run with volume mapping for data persistence
 docker run -p 8050:8050 \
   --env-file .env \
   -v $(pwd)/data:/app/data \
-  terraform-analysis-agent
+  mcp/terraform-analysis-agent
 ```
 
 ## Running in the Background
@@ -54,7 +51,7 @@ docker run -d \
   --env-file .env \
   -v $(pwd)/data:/app/data \
   --restart unless-stopped \
-  terraform-analysis-agent
+  mcp/terraform-analysis-agent
 ```
 
 ## Managing the Container
@@ -82,5 +79,5 @@ docker run -p 9000:9000 \
   --env PORT=9000 \
   --env-file .env \
   -v $(pwd)/data:/app/data \
-  terraform-analysis-agent
+  mcp/terraform-analysis-agent
 ```

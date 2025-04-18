@@ -43,8 +43,8 @@ async def mcp_lifespan(server: FastMCP) -> AsyncIterator[RepoContext]:
     try:
         yield RepoContext(chroma_client=chroma_client)
     finally:
-        # Ensure all data is written to disk
-        chroma_client.persist()
+        # No explicit persistence needed - PersistentClient handles this automatically
+        pass
 
 # Initialize FastMCP server
 mcp = FastMCP(
@@ -57,11 +57,17 @@ mcp = FastMCP(
 
 @mcp.tool()
 async def ingest_github_repo(ctx: Context, repo_url: str) -> str:
-    """Ingest a GitHub repository containing Terraform configurations.
-
+    """Ingest a GitHub repository to build a searchable knowledge base.
+    
+    This tool clones a GitHub repository, processes the code files, and indexes them for semantic search.
+    The indexed files can later be used to find relevant code snippets when debugging errors or answering questions.
+    
     Args:
-        ctx: The MCP server context
-        repo_url: URL of the GitHub repository to ingest
+        ctx: The MCP server context (automatically provided, no need to specify)
+        repo_url: Full URL of the GitHub repository to ingest (e.g., "https://github.com/username/repo")
+        
+    Returns:
+        A success message with the number of files ingested, or an error message if the operation failed.
     """
     try:
         # Get the collection
@@ -111,11 +117,20 @@ async def ingest_github_repo(ctx: Context, repo_url: str) -> str:
 
 @mcp.tool()
 async def analyze_error(ctx: Context, error_message: str) -> str:
-    """Analyze a Terraform error message using the ingested documentation.
-
+    """Analyze an error message and find relevant code snippets from ingested repositories.
+    
+    This tool performs semantic search against previously ingested code repositories to find
+    code examples or documentation related to the error or query you provided.
+    
+    First ingest one or more repositories using the ingest_github_repo tool, then use this tool
+    to analyze specific error messages or queries.
+    
     Args:
-        ctx: The MCP server context
-        error_message: The Terraform error message to analyze
+        ctx: The MCP server context (automatically provided, no need to specify)
+        error_message: The error message or query to analyze
+        
+    Returns:
+        Relevant code snippets and their file paths from the ingested repositories.
     """
     try:
         # Get the collection
@@ -140,13 +155,21 @@ async def analyze_error(ctx: Context, error_message: str) -> str:
         return f"Error analyzing error: {str(e)}"
 
 async def main():
-    transport = os.getenv("TRANSPORT", "sse")
+    transport = os.getenv("TRANSPORT")
+    if not transport:
+        print("❌ Error: TRANSPORT environment variable must be set to either 'sse' or 'stdio'")
+        print("   Please set it in your .env file or as an environment variable")
+        exit(1)
+        
     if transport == 'sse':
         print(f"🚀 MCP server starting at http://{DEFAULT_HOST}:{DEFAULT_PORT} using SSE transport")
         await mcp.run_sse_async()
-    else:
-        print(f"🚀 MCP server starting at http://{DEFAULT_HOST}:{DEFAULT_PORT} using STDIO transport")
+    elif transport == 'stdio':
+        print(f"🚀 MCP server starting using STDIO transport")
         await mcp.run_stdio_async()
+    else:
+        print(f"❌ Error: TRANSPORT must be either 'sse' or 'stdio', got '{transport}'")
+        exit(1)
 
 if __name__ == "__main__":
     asyncio.run(main())
