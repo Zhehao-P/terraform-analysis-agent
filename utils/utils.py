@@ -8,7 +8,7 @@ from qdrant_client.http.models import (
 )
 
 
-def setup_logging(module_name="terraform-analysis"):
+def setup_logging(module_name: str):
     """
     Set up basic logging configuration.
 
@@ -48,6 +48,16 @@ Extract the Following Information:
 """
 
 def get_embedding_function():
+    """
+    Creates and returns an embedding function using OpenAI's API.
+
+    Returns:
+        A function that takes text and returns embeddings
+
+    Raises:
+        ValueError: If required API configuration is missing
+    """
+    # Get API configuration
     api_key = os.getenv('LLM_API_KEY')
     api_base = os.getenv('LLM_BASE_URL')
     embedding_model = os.getenv('EMBEDDING_MODEL_CHOICE')
@@ -67,13 +77,30 @@ def get_embedding_function():
 
     logger.info(f"Using embedding model: {embedding_model}")
 
-    embedding_func = OpenAIEmbeddingFunction(
+    # Create OpenAI client
+    from openai import AsyncOpenAI
+    client = AsyncOpenAI(
         api_key=api_key,
-        api_base=api_base,
-        model_name=embedding_model
+        base_url=api_base
     )
-    logger.debug("OpenAI embedding function created")
-    return embedding_func
+
+    async def embed_text(text: str) -> list[float]:
+        """
+        Generate embeddings for the given text.
+
+        Args:
+            text: The text to generate embeddings for
+
+        Returns:
+            List of floats representing the embedding vector
+        """
+        response = await client.embeddings.create(
+            model=embedding_model,
+            input=text
+        )
+        return response.data[0].embedding
+
+    return embed_text
 
 class FilterType(Enum):
     MUST = "must"
@@ -105,36 +132,21 @@ class QdrantDB:
                 field_schema="keyword"
             )
 
-    def upsert_vectors(self, points: list[dict]):
+    def upsert_vectors(self, points: list[PointStruct]):
         """
-        Upsert vectors to the collection. If id is None or 0, Qdrant will generate it automatically.
+        Upsert vectors to the collection.
 
         Args:
-            points: List of dictionaries containing vector data
-                Each point should have:
-                - id (optional): Point ID (if None/0, will be auto-generated)
-                - vector: The vector data
-                - payload: Additional metadata
+            points: List of PointStruct objects containing vector data
 
         Returns:
             List of IDs for the upsert points (including auto-generated ones)
         """
-        point_structs = []
-        for point in points:
-            point_structs.append(
-                PointStruct(
-                    id=point.get("id", None),
-                    vector=point["vector"],
-                    payload=point["payload"]
-                )
-            )
-
         result = self.client.upsert(
             collection_name=self.collection_name,
-            points=point_structs
+            points=points
         )
 
-        # Return the IDs (including auto-generated ones)
         return result.ids
 
     def search_vectors(self, query_vector: list[float], limit: int = 10, filters: dict | None = None):
