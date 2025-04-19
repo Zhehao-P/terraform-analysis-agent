@@ -1,6 +1,12 @@
 import os
-import chromadb
 import logging
+from enum import Enum
+from qdrant_client import QdrantClient
+from qdrant_client.http.models import (
+    Distance, VectorParams, PointStruct,
+    Filter, FieldCondition, MatchValue
+)
+
 
 def setup_logging(module_name="terraform-analysis"):
     """
@@ -41,24 +47,7 @@ Extract the Following Information:
 - Source: Record where this information came from when applicable.
 """
 
-def get_chromadb_client(db_path, collection_name, collection_metadata=None):
-    """
-    Creates and returns a ChromaDB client with the configured embedding function.
-
-    Args:
-        db_path: Path to the ChromaDB database
-        collection_name: Name of the collection to use
-        collection_metadata: Optional metadata for the collection
-
-    Returns:
-        chromadb.Client: The configured ChromaDB client
-
-    Raises:
-        ValueError: If required API configuration is missing
-    """
-    logger.info(f"Initializing ChromaDB client with path: {db_path}")
-
-    # Get API configuration
+def get_embedding_function():
     api_key = os.getenv('LLM_API_KEY')
     api_base = os.getenv('LLM_BASE_URL')
     embedding_model = os.getenv('EMBEDDING_MODEL_CHOICE')
@@ -78,34 +67,113 @@ def get_chromadb_client(db_path, collection_name, collection_metadata=None):
 
     logger.info(f"Using embedding model: {embedding_model}")
 
-    # Create OpenAI embedding function
-    from chromadb.utils.embedding_functions import OpenAIEmbeddingFunction
-
     embedding_func = OpenAIEmbeddingFunction(
         api_key=api_key,
         api_base=api_base,
         model_name=embedding_model
     )
     logger.debug("OpenAI embedding function created")
+    return embedding_func
 
-    # Initialize ChromaDB with persistent storage
-    logger.info(f"Creating PersistentClient at: {db_path}")
-    chroma_client = chromadb.PersistentClient(path=str(db_path))
+class FilterType(Enum):
+    MUST = "must"
+    SHOULD = "should"
+    MUST_NOT = "must_not"
 
-    # Validate collection - make sure it can be created or accessed
-    metadata = collection_metadata or {}
-    try:
-        logger.info(f"Getting or creating collection: {collection_name}")
-        chroma_client.get_or_create_collection(
-            name=collection_name,
-            metadata=metadata,
-            embedding_function=embedding_func
+class QdrantDB:
+    def __init__(
+        self,
+        host: str = "localhost",
+        port: int = 6333,
+        collection_name: str = "github_chunks",
+        embed_fn: callable = None
+    ):
+        self.client = QdrantClient(host=host, port=port)
+        self.collection_name = collection_name
+        self.embed_fn = embed_fn
+
+    def ensure_collection(self, vector_size: int = 1536):
+        self.client.recreate_collection(
+            collection_name=self.collection_name,
+            vectors_config=VectorParams(size=vector_size, distance=Distance.COSINE)
         )
-        logger.info(f"Successfully connected to collection: {collection_name}")
-    except Exception as e:
-        error_msg = f"Failed to create or access collection '{collection_name}': {str(e)}"
-        logger.error(error_msg)
-        raise ValueError(error_msg)
 
-    # Return only the client
-    return chroma_client
+        for field in ["file_type", "file_role", "file_name", "repo"]:
+            self.client.create_payload_index(
+                collection_name=self.collection_name,
+                field_name=field,
+                field_schema="keyword"
+            )
+
+    def upsert_vectors(self, points: list[dict]):
+        """
+        Upsert vectors to the collection. If id is None or 0, Qdrant will generate it automatically.
+
+        Args:
+            points: List of dictionaries containing vector data
+                Each point should have:
+                - id (optional): Point ID (if None/0, will be auto-generated)
+                - vector: The vector data
+                - payload: Additional metadata
+
+        Returns:
+            List of IDs for the upsert points (including auto-generated ones)
+        """
+        point_structs = []
+        for point in points:
+            point_structs.append(
+                PointStruct(
+                    id=point.get("id", None),
+                    vector=point["vector"],
+                    payload=point["payload"]
+                )
+            )
+
+        result = self.client.upsert(
+            collection_name=self.collection_name,
+            points=point_structs
+        )
+
+        # Return the IDs (including auto-generated ones)
+        return result.ids
+
+    def search_vectors(self, query_vector: list[float], limit: int = 10, filters: dict | None = None):
+        filter_conditions = None
+        if filters:
+            filter_conditions = Filter(
+                must=[
+                    FieldCondition(key=k, match=MatchValue(value=v))
+                    for k, v in filters.items()
+                ]
+            )
+
+        return self.client.search(
+            collection_name=self.collection_name,
+            query_vector=query_vector,
+            limit=limit,
+            query_filter=filter_conditions
+        )
+
+    def delete_vectors(self, ids: list[str]):
+        self.client.delete(collection_name=self.collection_name, points_selector={"points": ids})
+
+    def delete_vectors_by_filter(self, filters: dict[FilterType, dict[str, str | list[str]]]):
+        filter_payload = {}
+
+        for filter_type, condition_dict in filters.items():
+            field_conditions = []
+            for key, value in condition_dict.items():
+                if isinstance(value, list):
+                    field_conditions.extend([
+                        FieldCondition(key=key, match=MatchValue(value=item)) for item in value
+                    ])
+                else:
+                    field_conditions.append(FieldCondition(key=key, match=MatchValue(value=value)))
+            filter_payload[filter_type.value] = field_conditions
+
+        filter_obj = Filter(**filter_payload)
+
+        self.client.delete(
+            collection_name=self.collection_name,
+            filter=filter_obj
+        )
