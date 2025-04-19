@@ -110,9 +110,9 @@ class FilterType(Enum):
 class QdrantDB:
     def __init__(
         self,
-        host: str = "localhost",
-        port: int = 6333,
-        collection_name: str = "github_chunks",
+        host: str = os.getenv("QDRANT_HOST", "localhost"),
+        port: int = os.getenv("QDRANT_PORT", 6333),
+        collection_name: str = os.getenv("QDRANT_COLLECTION_NAME", "knowledge_db"),
         embed_fn: callable = None
     ):
         self.client = QdrantClient(host=host, port=port)

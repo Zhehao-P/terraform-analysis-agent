@@ -9,13 +9,8 @@ import asyncio
 import datetime
 from pathlib import Path
 from config import (
-    CHROMA_DB_DIR,
     GITHUB_DIR,
     PROCESS_FILE_EXTENSIONS,
-    DEFAULT_HOST,
-    DEFAULT_PORT,
-    CHROMA_COLLECTION_NAME,
-    CHROMA_COLLECTION_METADATA
 )
 from utils import get_chromadb_client, setup_logging
 
@@ -39,11 +34,7 @@ async def mcp_lifespan(server: FastMCP) -> AsyncIterator[RepoContext]:
     """
     # Create and initialize the ChromaDB client with the helper function
     logger.info("Initializing ChromaDB client")
-    chroma_client = get_chromadb_client(
-        CHROMA_DB_DIR,
-        CHROMA_COLLECTION_NAME,
-        CHROMA_COLLECTION_METADATA
-    )
+
 
     try:
         yield RepoContext(chroma_client=chroma_client)
@@ -57,8 +48,8 @@ mcp = FastMCP(
     "repo-analysis-agent",
     description="MCP server for repository content analysis using RAG",
     lifespan=mcp_lifespan,
-    host=os.getenv("HOST", DEFAULT_HOST),
-    port=os.getenv("PORT", DEFAULT_PORT)
+    host=os.getenv("HOST", "0.0.0.0"),
+    port=os.getenv("PORT", "8000")
 )
 
 @mcp.tool()
@@ -264,11 +255,7 @@ async def analyze_terraform_resource(ctx: Context, resource_name: str, n_results
         return f"Error searching for Terraform resource: {str(e)}"
 
 async def main():
-    transport = os.getenv("TRANSPORT")
-    if not transport:
-        print("❌ Error: TRANSPORT environment variable must be set to either 'sse' or 'stdio'")
-        print("   Please set it in your .env file or as an environment variable")
-        exit(1)
+    transport = os.getenv("TRANSPORT", "sse")
 
     if transport == 'sse':
         print(f"🚀 MCP server starting using SSE transport")
