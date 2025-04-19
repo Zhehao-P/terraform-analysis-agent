@@ -5,7 +5,7 @@
 ```mermaid
 graph TD
     A[GitHub Repositories] --> B[Processing Script]
-    B --> C[Qdrant via Docker]
+    B --> C[Qdrant]
     D[LLM (e.g., Claude, ChatGPT)] --> E[MCP Server]
     E --> C
     C --> E
@@ -16,21 +16,13 @@ graph TD
 
 ## 🧺 组件详解
 
-### 1. 📦 Qdrant 部署（Docker）
+### 1. 📦 Qdrant 数据库
 
-使用 Docker 部署 Qdrant，确保数据持久化和服务的稳定运行。
-
-```bash
-docker run -p 6333:6333 -p 6334:6334 \
-  -v $(pwd)/qdrant_storage:/qdrant/storage \
-  qdrant/qdrant
-```
+使用 Qdrant 作为向量数据库，提供高效的向量存储和检索能力。
 
 - **REST API**：`http://localhost:6333`
 - **Web UI**：`http://localhost:6333/dashboard`
 - **gRPC API**：`localhost:6334`
-
-上述命令将 Qdrant 部署在本地的 6333 端口，并将数据持久化到 `./qdrant_storage` 目录中。
 
 ---
 

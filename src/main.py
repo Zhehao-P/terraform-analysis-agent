@@ -64,50 +64,50 @@ mcp = FastMCP(
 @mcp.tool()
 async def ingest_github_repo(ctx: Context) -> str:
     """Build a searchable knowledge base from local repositories.
-    
+
     This tool scans all local repositories in the data/github directory and indexes their Terraform and Go files.
     It builds a local vector database that enables semantic search for code snippets when debugging errors.
     The tool automatically handles incremental updates - only new or modified files will be processed.
-    
+
     No parameters needed - all repositories in the data/github directory will be automatically processed.
-    
+
     Args:
         ctx: The MCP server context (automatically provided, no need to specify)
-        
+
     Returns:
         A summary of the ingestion process, including counts of indexed, updated, and skipped files.
     """
     start_time = datetime.datetime.now()
     logger.info(f"Starting knowledge base ingestion at {start_time}")
-    
+
     try:
         # Get the collection
         collection = ctx.request_context.lifespan_context.chroma_client.get_collection(
             name=CHROMA_COLLECTION_NAME
         )
-        
+
         # Process all repositories in the github directory
         total_documents = 0
         total_skipped = 0
         total_updated = 0
         processed_repos = 0
         test_skipped = 0
-        
+
         # Get all directories in the github directory
         repo_dirs = [d for d in GITHUB_DIR.iterdir() if d.is_dir()]
-        
+
         if not repo_dirs:
             logger.warning(f"No local repositories found in {GITHUB_DIR}")
             return f"No local repositories found in {GITHUB_DIR}. Please add repositories to this directory."
-        
+
         logger.info(f"Found {len(repo_dirs)} repositories to process in {GITHUB_DIR}")
-        
+
         # Process each repository
         for repo_dir in repo_dirs:
             repo_name = repo_dir.name
             repo_start_time = datetime.datetime.now()
             logger.info(f"Processing repository: {repo_name}, started at {repo_start_time}")
-            
+
             documents = []
             metadatas = []
             ids = []
@@ -120,35 +120,35 @@ async def ingest_github_repo(ctx: Context) -> str:
                     if Path(file).suffix in PROCESS_FILE_EXTENSIONS:
                         file_path = os.path.join(root, file)
                         relative_path = os.path.relpath(file_path, str(repo_dir))
-                        
+
                         # Skip test files
                         if "test" in relative_path.lower():
                             repo_test_skipped += 1
                             logger.debug(f"Skipping test file: {relative_path}")
                             continue
-                        
+
                         # Create a unique ID that includes the repo name to avoid conflicts
                         file_id = f"{repo_name}/{relative_path}"
-                        
+
                         # Get file last modification time
                         last_modified = str(os.path.getmtime(file_path))
-                        
+
                         # Check if file already exists in collection by querying for this specific ID
                         existing_item = collection.get(ids=[file_id])
-                        
+
                         # If the file exists in the database (ids list not empty)
                         if existing_item['ids']:
                             # Get metadata if available
                             if existing_item['metadatas'] and existing_item['metadatas'][0]:
                                 existing_last_modified = existing_item['metadatas'][0].get('last_modified', '')
-                                
+
                                 # Compare timestamps
                                 if existing_last_modified == last_modified:
                                     # File exists and hasn't changed, skip it
                                     skipped += 1
                                     logger.debug(f"Skipping unchanged file: {file_id}")
                                     continue
-                            
+
                             # File exists but has changed (or no timestamp), update it
                             updated += 1
                             logger.debug(f"Updating modified file: {file_id}")
@@ -156,7 +156,7 @@ async def ingest_github_repo(ctx: Context) -> str:
                             collection.delete(ids=[file_id])
                         else:
                             logger.debug(f"Processing new file: {file_id}")
-                        
+
                         # Process the file
                         with open(file_path, 'r', encoding='utf-8') as f:
                             content = f.read()
@@ -182,7 +182,7 @@ async def ingest_github_repo(ctx: Context) -> str:
                 total_updated += updated
                 test_skipped += repo_test_skipped
                 processed_repos += 1
-                
+
                 repo_end_time = datetime.datetime.now()
                 duration = (repo_end_time - repo_start_time).total_seconds()
                 logger.info(f"Repository '{repo_name}' processed in {duration:.2f} seconds: {len(documents)} files added, {updated} updated, {skipped} skipped, {repo_test_skipped} test files skipped")
@@ -191,7 +191,7 @@ async def ingest_github_repo(ctx: Context) -> str:
 
         end_time = datetime.datetime.now()
         duration = (end_time - start_time).total_seconds()
-        
+
         if total_documents > 0:
             result_msg = f"Local knowledge base updated: {processed_repos} repositories processed, {total_documents} total files indexed, {total_updated} updated, {total_skipped} skipped (unchanged), {test_skipped} test files skipped. Completed in {duration:.2f} seconds."
             logger.info(result_msg)
@@ -207,18 +207,18 @@ async def ingest_github_repo(ctx: Context) -> str:
 @mcp.tool()
 async def analyze_terraform_resource(ctx: Context, resource_name: str, n_results: int = 3) -> str:
     """Find examples and documentation for Terraform resources from indexed repositories.
-    
+
     This tool performs semantic search against previously ingested Terraform code to find
     examples of how specific resources are used in real-world configurations.
-    
+
     First ingest one or more repositories using the ingest_github_repo tool, then use this tool
     to search for specific Terraform resources (e.g., "aws_s3_bucket", "azurerm_virtual_network").
-    
+
     Args:
         ctx: The MCP server context (automatically provided, no need to specify)
         resource_name: The Terraform resource type to find examples for (e.g., "aws_s3_bucket")
         n_results: Number of example files to return (default: 3)
-        
+
     Returns:
         Example code snippets and configurations for the specified Terraform resource.
     """
@@ -247,12 +247,12 @@ async def analyze_terraform_resource(ctx: Context, resource_name: str, n_results
 
         # Format the response
         response = f"Found {len(results['documents'][0])} examples for Terraform resource `{resource_name}`:\n\n"
-        
+
         for i, (doc, metadata) in enumerate(zip(results['documents'][0], results['metadatas'][0]), 1):
             # Extract repo and path information
             repo = metadata.get('repo', 'unknown')
             path = metadata.get('path', 'unknown')
-            
+
             response += f"### Example {i}: {repo}/{path}\n\n"
             response += "```terraform\n"
             response += doc.strip()
@@ -269,7 +269,7 @@ async def main():
         print("❌ Error: TRANSPORT environment variable must be set to either 'sse' or 'stdio'")
         print("   Please set it in your .env file or as an environment variable")
         exit(1)
-        
+
     if transport == 'sse':
         print(f"🚀 MCP server starting using SSE transport")
         await mcp.run_sse_async()

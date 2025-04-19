@@ -5,24 +5,24 @@ import logging
 def setup_logging(module_name="terraform-analysis"):
     """
     Set up basic logging configuration.
-    
+
     Args:
         module_name: Name for the logger
-        
+
     Returns:
         A configured logger instance
     """
     # Check if DEBUG environment variable is set
     debug_mode = os.getenv('DEBUG') is not None
     log_level = logging.DEBUG if debug_mode else logging.INFO
-    
+
     # Configure logging
     if not logging.getLogger().handlers:
         logging.basicConfig(
             level=log_level,
             format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
         )
-    
+
     # Get the logger and ensure it has the right level
     logger = logging.getLogger(module_name)
     logger.setLevel(log_level)
@@ -57,7 +57,7 @@ def get_chromadb_client(db_path, collection_name, collection_metadata=None):
         ValueError: If required API configuration is missing
     """
     logger.info(f"Initializing ChromaDB client with path: {db_path}")
-    
+
     # Get API configuration
     api_key = os.getenv('LLM_API_KEY')
     api_base = os.getenv('LLM_BASE_URL')
@@ -77,7 +77,7 @@ def get_chromadb_client(db_path, collection_name, collection_metadata=None):
         raise ValueError("EMBEDDING_MODEL_CHOICE environment variable must be set")
 
     logger.info(f"Using embedding model: {embedding_model}")
-    
+
     # Create OpenAI embedding function
     from chromadb.utils.embedding_functions import OpenAIEmbeddingFunction
 
