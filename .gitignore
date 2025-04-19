@@ -16,3 +16,5 @@ data/github/*
 !data/chromadb/.gitkeep
 !data/cache/.gitkeep
 !data/github/.gitkeep
+
+.DS_Store
