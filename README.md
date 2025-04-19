@@ -6,7 +6,7 @@ An MCP server implementation that analyzes Terraform configurations and reposito
 
 This project provides an MCP (Model Context Protocol) server that can:
 1. Ingest Terraform repositories for analysis
-2. Search for relevant code when debugging Terraform errors
+2. Search for examples of specific Terraform resources
 3. Integrate with any MCP-compatible client (Claude, Windsurf, etc.)
 
 The server uses ChromaDB for vector storage and efficient semantic search.
@@ -15,8 +15,8 @@ The server uses ChromaDB for vector storage and efficient semantic search.
 
 The server provides two essential tools:
 
-1. **`ingest_github_repo`**: Clone and index Terraform repositories for analysis
-2. **`analyze_error`**: Find relevant code snippets based on Terraform error messages
+1. **`ingest_github_repo`**: Scan and index local Terraform repositories for analysis
+2. **`analyze_terraform_resource`**: Find examples of specific Terraform resources in indexed code
 
 ## Prerequisites
 
@@ -74,6 +74,7 @@ The following environment variables must be configured in your `.env` file:
 | `LLM_API_KEY` | API key for embeddings | `sk-...` |
 | `LLM_BASE_URL` | Base URL for the API | `https://api.openai.com/v1` |
 | `EMBEDDING_MODEL_CHOICE` | Embedding model to use | `text-embedding-3-small` |
+| `DEBUG` | Enable debug logging (set to any value) | (leave empty for INFO level) |
 
 ## Running the Server
 

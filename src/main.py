@@ -205,21 +205,22 @@ async def ingest_github_repo(ctx: Context) -> str:
         return f"Error building knowledge base: {str(e)}"
 
 @mcp.tool()
-async def analyze_error(ctx: Context, error_message: str) -> str:
-    """Analyze an error message and find relevant code snippets from ingested repositories.
+async def analyze_terraform_resource(ctx: Context, resource_name: str, n_results: int = 3) -> str:
+    """Find examples and documentation for Terraform resources from indexed repositories.
     
-    This tool performs semantic search against previously ingested code repositories to find
-    code examples or documentation related to the error or query you provided.
+    This tool performs semantic search against previously ingested Terraform code to find
+    examples of how specific resources are used in real-world configurations.
     
     First ingest one or more repositories using the ingest_github_repo tool, then use this tool
-    to analyze specific error messages or queries.
+    to search for specific Terraform resources (e.g., "aws_s3_bucket", "azurerm_virtual_network").
     
     Args:
         ctx: The MCP server context (automatically provided, no need to specify)
-        error_message: The error message or query to analyze
+        resource_name: The Terraform resource type to find examples for (e.g., "aws_s3_bucket")
+        n_results: Number of example files to return (default: 3)
         
     Returns:
-        Relevant code snippets and their file paths from the ingested repositories.
+        Example code snippets and configurations for the specified Terraform resource.
     """
     try:
         # Get the collection
@@ -227,21 +228,40 @@ async def analyze_error(ctx: Context, error_message: str) -> str:
             name=CHROMA_COLLECTION_NAME
         )
 
+        # Log the search query
+        logger.info(f"Searching for Terraform resource: {resource_name}, requesting {n_results} results")
+
+        # Create a search query that targets Terraform resources
+        query = f"Terraform resource {resource_name} example configuration"
+
         # Search for relevant documentation
         results = collection.query(
-            query_texts=[error_message],
-            n_results=3
+            query_texts=[query],
+            n_results=n_results
         )
 
+        # Check if we found any results
+        if not results['documents'] or not results['documents'][0]:
+            logger.info(f"No examples found for resource: {resource_name}")
+            return f"No examples found for Terraform resource '{resource_name}'. Try ingesting more repositories or check the resource name."
+
         # Format the response
-        response = "Found relevant documentation:\n\n"
+        response = f"Found {len(results['documents'][0])} examples for Terraform resource `{resource_name}`:\n\n"
+        
         for i, (doc, metadata) in enumerate(zip(results['documents'][0], results['metadatas'][0]), 1):
-            response += f"{i}. File: {metadata['path']}\n"
-            response += f"Content:\n{doc}\n\n"
+            # Extract repo and path information
+            repo = metadata.get('repo', 'unknown')
+            path = metadata.get('path', 'unknown')
+            
+            response += f"### Example {i}: {repo}/{path}\n\n"
+            response += "```terraform\n"
+            response += doc.strip()
+            response += "\n```\n\n"
 
         return response
     except Exception as e:
-        return f"Error analyzing error: {str(e)}"
+        logger.error(f"Error searching for Terraform resource: {str(e)}", exc_info=True)
+        return f"Error searching for Terraform resource: {str(e)}"
 
 async def main():
     transport = os.getenv("TRANSPORT")
