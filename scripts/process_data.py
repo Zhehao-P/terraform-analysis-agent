@@ -74,14 +74,14 @@ async def process_file(file_path: str, repo_dir: Path, qdrant_db: QdrantDB) -> l
     """
     repo_name = repo_dir.name
     relative_path = os.path.relpath(file_path, str(repo_dir))
-    relative_path = os.path.join(repo_name, relative_path)
+    relative_path = os.path.join(repo_name, os.path.relpath(file_path, str(repo_dir)))
     file_type = get_file_type(Path(relative_path))
 
     if file_type == FileType.NOT_SUPPORTED:
         logger.debug("Skipping unknown file type: %s", relative_path)
         return []
 
-    tqdm.write("Processing file: %s", relative_path)
+    logger.info("Processing file: %s", relative_path)
 
     last_modified = str(os.path.getmtime(file_path))
 
@@ -97,7 +97,7 @@ async def process_file(file_path: str, repo_dir: Path, qdrant_db: QdrantDB) -> l
     embedded_chunks = qdrant_db.embed_fn(chunks)
     points = [
         PointStruct(
-            id=repo_name + "-" + str(uuid.uuid4()),
+            id=str(uuid.uuid4()),
             vector=embedded_chunk,
             payload={
                 PayloadField.FILE_TYPE.field_name: file_type.value,
