@@ -2,6 +2,7 @@
 Process data from GitHub repositories and upload to Qdrant.
 """
 import asyncio
+import datetime
 from enum import Enum
 import os
 from pathlib import Path
@@ -16,6 +17,8 @@ from common.utils import (
     setup_logging,
     get_embedding_function,
 )
+from qdrant_client.models import FilterSelector, Filter, FieldCondition, MatchValue
+
 
 logger = setup_logging(__name__)
 
@@ -73,17 +76,38 @@ async def process_file(file_path: str, repo_dir: Path, qdrant_db: QdrantDB) -> l
         List of IDs for the upsert points
     """
     repo_name = repo_dir.name
-    relative_path = os.path.relpath(file_path, str(repo_dir))
     relative_path = os.path.join(repo_name, os.path.relpath(file_path, str(repo_dir)))
     file_type = get_file_type(Path(relative_path))
+    last_modified = datetime.datetime.fromtimestamp(
+        os.path.getmtime(file_path), tz=datetime.timezone.utc
+    ).isoformat()
+
+    filter_selector = FilterSelector(
+        filter=Filter(
+            must=[
+                FieldCondition(
+                    key=PayloadField.FILE_PATH.field_name,
+                    match=MatchValue(value=relative_path)
+                ),
+                FieldCondition(
+                    key=PayloadField.LAST_MODIFIED.field_name,
+                    match=MatchValue(value=last_modified)
+                )
+            ]
+        )
+    )
 
     if file_type == FileType.NOT_SUPPORTED:
         logger.debug("Skipping unknown file type: %s", relative_path)
         return []
 
-    logger.info("Processing file: %s", relative_path)
+    if qdrant_db.check_metadata_exists(filter_selector):
+        logger.debug("Skipping existing file: %s", relative_path)
+        return []
 
-    last_modified = str(os.path.getmtime(file_path))
+    qdrant_db.delete_vectors_by_filter(filter_selector)
+
+    logger.info("Processing file: %s", relative_path)
 
     with open(file_path, "r", encoding="utf-8") as f:
         text = f.read()

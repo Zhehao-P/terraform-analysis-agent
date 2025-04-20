@@ -243,7 +243,7 @@ class QdrantDB:
         return self.client.upsert(collection_name=self.collection_name, points=points)
 
     def search_vectors(
-        self, query_vector: list[float], limit: int = 10, filters: dict | None = None
+        self, query_vector: list[float], limit: int = 10, points_selector: FilterSelector | None = None
     ):
         """
         Search for similar vectors in the collection.
@@ -256,20 +256,11 @@ class QdrantDB:
         Returns:
             Search results matching the query
         """
-        filter_conditions = None
-        if filters:
-            filter_conditions = Filter(
-                must=[
-                    FieldCondition(key=k, match=MatchValue(value=v))
-                    for k, v in filters.items()
-                ]
-            )
-
         return self.client.search(
             collection_name=self.collection_name,
             query_vector=query_vector,
             limit=limit,
-            query_filter=filter_conditions,
+            query_filter=points_selector,
         )
 
     def delete_vectors(self, ids: list[str]):
