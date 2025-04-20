@@ -17,10 +17,13 @@ from utils import get_chromadb_client, setup_logging
 # Set up logging
 logger = setup_logging()
 
+
 @dataclass
 class RepoContext:
     """Context for managing repository content storage and retrieval."""
+
     chroma_client: chromadb.Client
+
 
 @asynccontextmanager
 async def mcp_lifespan(server: FastMCP) -> AsyncIterator[RepoContext]:
@@ -35,7 +38,6 @@ async def mcp_lifespan(server: FastMCP) -> AsyncIterator[RepoContext]:
     # Create and initialize the ChromaDB client with the helper function
     logger.info("Initializing ChromaDB client")
 
-
     try:
         yield RepoContext(chroma_client=chroma_client)
     finally:
@@ -43,14 +45,16 @@ async def mcp_lifespan(server: FastMCP) -> AsyncIterator[RepoContext]:
         logger.info("Shutting down ChromaDB client")
         pass
 
+
 # Initialize FastMCP server
 mcp = FastMCP(
     "repo-analysis-agent",
     description="MCP server for repository content analysis using RAG",
     lifespan=mcp_lifespan,
     host=os.getenv("HOST", "0.0.0.0"),
-    port=os.getenv("PORT", "8000")
+    port=os.getenv("PORT", "8000"),
 )
+
 
 @mcp.tool()
 async def ingest_github_repo(ctx: Context) -> str:
@@ -97,7 +101,9 @@ async def ingest_github_repo(ctx: Context) -> str:
         for repo_dir in repo_dirs:
             repo_name = repo_dir.name
             repo_start_time = datetime.datetime.now()
-            logger.info(f"Processing repository: {repo_name}, started at {repo_start_time}")
+            logger.info(
+                f"Processing repository: {repo_name}, started at {repo_start_time}"
+            )
 
             documents = []
             metadatas = []
@@ -128,10 +134,15 @@ async def ingest_github_repo(ctx: Context) -> str:
                         existing_item = collection.get(ids=[file_id])
 
                         # If the file exists in the database (ids list not empty)
-                        if existing_item['ids']:
+                        if existing_item["ids"]:
                             # Get metadata if available
-                            if existing_item['metadatas'] and existing_item['metadatas'][0]:
-                                existing_last_modified = existing_item['metadatas'][0].get('last_modified', '')
+                            if (
+                                existing_item["metadatas"]
+                                and existing_item["metadatas"][0]
+                            ):
+                                existing_last_modified = existing_item["metadatas"][
+                                    0
+                                ].get("last_modified", "")
 
                                 # Compare timestamps
                                 if existing_last_modified == last_modified:
@@ -149,25 +160,25 @@ async def ingest_github_repo(ctx: Context) -> str:
                             logger.debug(f"Processing new file: {file_id}")
 
                         # Process the file
-                        with open(file_path, 'r', encoding='utf-8') as f:
+                        with open(file_path, "r", encoding="utf-8") as f:
                             content = f.read()
                             documents.append(content)
-                            metadatas.append({
-                                'repo': repo_name,
-                                'path': relative_path,
-                                'full_path': file_id,
-                                'last_modified': last_modified
-                            })
+                            metadatas.append(
+                                {
+                                    "repo": repo_name,
+                                    "path": relative_path,
+                                    "full_path": file_id,
+                                    "last_modified": last_modified,
+                                }
+                            )
                             ids.append(file_id)
 
             # Store in ChromaDB in a single batch
             if documents:
-                logger.info(f"Adding {len(documents)} documents to collection from repository {repo_name}")
-                collection.add(
-                    documents=documents,
-                    metadatas=metadatas,
-                    ids=ids
+                logger.info(
+                    f"Adding {len(documents)} documents to collection from repository {repo_name}"
                 )
+                collection.add(documents=documents, metadatas=metadatas, ids=ids)
                 total_documents += len(documents)
                 total_skipped += skipped
                 total_updated += updated
@@ -176,9 +187,13 @@ async def ingest_github_repo(ctx: Context) -> str:
 
                 repo_end_time = datetime.datetime.now()
                 duration = (repo_end_time - repo_start_time).total_seconds()
-                logger.info(f"Repository '{repo_name}' processed in {duration:.2f} seconds: {len(documents)} files added, {updated} updated, {skipped} skipped, {repo_test_skipped} test files skipped")
+                logger.info(
+                    f"Repository '{repo_name}' processed in {duration:.2f} seconds: {len(documents)} files added, {updated} updated, {skipped} skipped, {repo_test_skipped} test files skipped"
+                )
             else:
-                logger.info(f"No documents to add from repository {repo_name} ({repo_test_skipped} test files skipped)")
+                logger.info(
+                    f"No documents to add from repository {repo_name} ({repo_test_skipped} test files skipped)"
+                )
 
         end_time = datetime.datetime.now()
         duration = (end_time - start_time).total_seconds()
@@ -195,8 +210,11 @@ async def ingest_github_repo(ctx: Context) -> str:
         logger.error(f"Error building knowledge base: {str(e)}", exc_info=True)
         return f"Error building knowledge base: {str(e)}"
 
+
 @mcp.tool()
-async def analyze_terraform_resource(ctx: Context, resource_name: str, n_results: int = 3) -> str:
+async def analyze_terraform_resource(
+    ctx: Context, resource_name: str, n_results: int = 3
+) -> str:
     """Find examples and documentation for Terraform resources from indexed repositories.
 
     This tool performs semantic search against previously ingested Terraform code to find
@@ -220,29 +238,30 @@ async def analyze_terraform_resource(ctx: Context, resource_name: str, n_results
         )
 
         # Log the search query
-        logger.info(f"Searching for Terraform resource: {resource_name}, requesting {n_results} results")
+        logger.info(
+            f"Searching for Terraform resource: {resource_name}, requesting {n_results} results"
+        )
 
         # Create a search query that targets Terraform resources
         query = f"Terraform resource {resource_name} example configuration"
 
         # Search for relevant documentation
-        results = collection.query(
-            query_texts=[query],
-            n_results=n_results
-        )
+        results = collection.query(query_texts=[query], n_results=n_results)
 
         # Check if we found any results
-        if not results['documents'] or not results['documents'][0]:
+        if not results["documents"] or not results["documents"][0]:
             logger.info(f"No examples found for resource: {resource_name}")
             return f"No examples found for Terraform resource '{resource_name}'. Try ingesting more repositories or check the resource name."
 
         # Format the response
         response = f"Found {len(results['documents'][0])} examples for Terraform resource `{resource_name}`:\n\n"
 
-        for i, (doc, metadata) in enumerate(zip(results['documents'][0], results['metadatas'][0]), 1):
+        for i, (doc, metadata) in enumerate(
+            zip(results["documents"][0], results["metadatas"][0]), 1
+        ):
             # Extract repo and path information
-            repo = metadata.get('repo', 'unknown')
-            path = metadata.get('path', 'unknown')
+            repo = metadata.get("repo", "unknown")
+            path = metadata.get("path", "unknown")
 
             response += f"### Example {i}: {repo}/{path}\n\n"
             response += "```terraform\n"
@@ -254,18 +273,20 @@ async def analyze_terraform_resource(ctx: Context, resource_name: str, n_results
         logger.error(f"Error searching for Terraform resource: {str(e)}", exc_info=True)
         return f"Error searching for Terraform resource: {str(e)}"
 
+
 async def main():
     transport = os.getenv("TRANSPORT", "sse")
 
-    if transport == 'sse':
+    if transport == "sse":
         print(f"🚀 MCP server starting using SSE transport")
         await mcp.run_sse_async()
-    elif transport == 'stdio':
+    elif transport == "stdio":
         print(f"🚀 MCP server starting using STDIO transport")
         await mcp.run_stdio_async()
     else:
         print(f"❌ Error: TRANSPORT must be either 'sse' or 'stdio', got '{transport}'")
         exit(1)
+
 
 if __name__ == "__main__":
     asyncio.run(main())
