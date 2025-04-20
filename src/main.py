@@ -9,6 +9,7 @@ from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Optional
+from pathlib import Path
 from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP, Context
 from qdrant_client.models import Filter, FieldCondition, MatchText
@@ -26,7 +27,10 @@ load_dotenv()
 # Set up logging
 logger = setup_logging()
 
+# Base directory
+BASE_DIR = Path(__file__).parent.parent
 GITHUB_DIR = os.getenv("GITHUB_DIR", "data/github")
+GITHUB_DIR = str(BASE_DIR / GITHUB_DIR)
 
 
 @dataclass
@@ -62,8 +66,8 @@ mcp = FastMCP(
     "repo-analysis-agent",
     description="MCP server for repository content analysis using RAG",
     lifespan=mcp_lifespan,
-    host=os.getenv("HOST", "0.0.0.0"),
-    port=os.getenv("PORT", "8000"),
+    host=os.getenv("HOST") or "0.0.0.0",
+    port=int(os.getenv("PORT") or "8000"),
 )
 
 
@@ -180,7 +184,7 @@ async def main():
     """
     Main entry point for the MCP server.
     """
-    transport = os.getenv("TRANSPORT", "sse")
+    transport = os.getenv("TRANSPORT") or "sse"
 
     if transport == "sse":
         print("🚀 MCP server starting using SSE transport")

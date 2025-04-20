@@ -34,7 +34,7 @@ EMBEDDING_MODEL_CHOICE=text-embedding-3-small
 docker build -t mcp/terraform-analysis-agent .
 
 # Run with volume mapping for data persistence
-docker run -p 8050:8050 \
+docker run -p 8000:8000 \
   --env-file .env \
   -v $(pwd)/data:/app/data \
   mcp/terraform-analysis-agent
@@ -47,7 +47,7 @@ For production use:
 ```bash
 docker run -d \
   --name terraform-agent \
-  -p 8050:8050 \
+  -p 8000:8000 \
   --env-file .env \
   -v $(pwd)/data:/app/data \
   --restart unless-stopped \

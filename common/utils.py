@@ -18,6 +18,7 @@ from qdrant_client.http.models import (
     PayloadSchemaType,
 )
 
+DIMENSIONS = int(os.getenv("EMBEDDING_DIMENSIONS") or "1024")
 
 def setup_logging(module_name="terraform-analysis") -> logging.Logger:
     """
@@ -29,7 +30,7 @@ def setup_logging(module_name="terraform-analysis") -> logging.Logger:
     Returns:
         A configured logger instance
     """
-    debug_mode = os.getenv("DEBUG") is not None
+    debug_mode = os.getenv("DEBUG") or False
     log_level = logging.DEBUG if debug_mode else logging.INFO
 
     logger_obj = logging.getLogger(module_name)
@@ -47,7 +48,6 @@ def setup_logging(module_name="terraform-analysis") -> logging.Logger:
     return logger_obj
 
 
-# Get logger with default module name
 logger = setup_logging()
 
 CUSTOM_INSTRUCTIONS = """
@@ -75,7 +75,7 @@ def get_embedding_function():
     api_key = os.getenv("LLM_API_KEY")
     api_base = os.getenv("LLM_BASE_URL")
     embedding_model = os.getenv("EMBEDDING_MODEL_CHOICE")
-    dimensions = int(os.getenv("EMBEDDING_DIMENSIONS", "1024"))
+
 
     # Validate required configuration
     if not api_key:
@@ -111,7 +111,7 @@ def get_embedding_function():
         response = await client.embeddings.create(
             input=texts,
             model=embedding_model,
-            dimensions=dimensions,
+            dimensions=DIMENSIONS,
             encoding_format="float",
         )
         return [item.embedding for item in response.data]
@@ -177,9 +177,9 @@ class QdrantDB:
 
     def __init__(
         self,
-        host: str = os.getenv("QDRANT_HOST", "localhost"),
-        port: int = int(os.getenv("QDRANT_PORT", "6333")),
-        collection_name: str = os.getenv("QDRANT_COLLECTION_NAME", "knowledge_db"),
+        host: str = os.getenv("QDRANT_HOST") or "localhost",
+        port: int = int(os.getenv("QDRANT_PORT") or "6333"),
+        collection_name: str = os.getenv("QDRANT_COLLECTION_NAME") or "knowledge_db",
         embed_fn: callable = None,
     ):
         """
@@ -197,7 +197,7 @@ class QdrantDB:
         self.collection = self._ensure_collection()
 
     def _ensure_collection(
-        self, vector_size: int = int(os.getenv("EMBEDDING_DIMENSIONS", "1024"))
+        self, vector_size: int = DIMENSIONS
     ):
         """
         Ensure the collection exists with correct configuration.
