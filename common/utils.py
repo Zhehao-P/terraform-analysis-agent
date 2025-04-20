@@ -8,7 +8,7 @@ from qdrant_client.http.models import (
 )
 
 
-def setup_logging(module_name: str):
+def setup_logging(module_name="terraform-analysis"):
     """
     Set up basic logging configuration.
 
@@ -34,7 +34,7 @@ def setup_logging(module_name: str):
     logger.setLevel(log_level)
     return logger
 
-# Get logger
+# Get logger with default module name
 logger = setup_logging()
 
 CUSTOM_INSTRUCTIONS = """
@@ -61,6 +61,7 @@ def get_embedding_function():
     api_key = os.getenv('LLM_API_KEY')
     api_base = os.getenv('LLM_BASE_URL')
     embedding_model = os.getenv('EMBEDDING_MODEL_CHOICE')
+    dimensions = os.getenv('EMBEDDING_DIMENSIONS', 1024)
 
     # Validate required configuration
     if not api_key:
@@ -78,29 +79,22 @@ def get_embedding_function():
     logger.info(f"Using embedding model: {embedding_model}")
 
     # Create OpenAI client
-    from openai import AsyncOpenAI
-    client = AsyncOpenAI(
+    from openai import OpenAI
+    client = OpenAI(
         api_key=api_key,
         base_url=api_base
     )
 
-    async def embed_text(text: str) -> list[float]:
-        """
-        Generate embeddings for the given text.
-
-        Args:
-            text: The text to generate embeddings for
-
-        Returns:
-            List of floats representing the embedding vector
-        """
-        response = await client.embeddings.create(
-            model=embedding_model,
-            input=text
+    def embed_batch(texts: list[str]) -> list[list[float]]:
+        response = client.embeddings.create(
+            texts,
+            embedding_model,
+            dimensions,
+            "float"
         )
-        return response.data[0].embedding
+        return [item.embedding for item in response.data]
 
-    return embed_text
+    return embed_batch
 
 class FilterType(Enum):
     MUST = "must"
@@ -119,7 +113,7 @@ class QdrantDB:
         self.collection_name = collection_name
         self.embed_fn = embed_fn
 
-    def ensure_collection(self, vector_size: int = 1536):
+    def ensure_collection(self, vector_size: int = os.getenv("EMBEDDING_DIMENSIONS", 1024)):
         self.client.recreate_collection(
             collection_name=self.collection_name,
             vectors_config=VectorParams(size=vector_size, distance=Distance.COSINE)
