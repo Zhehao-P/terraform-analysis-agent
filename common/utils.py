@@ -149,6 +149,12 @@ class PayloadField(Enum):
 
 
 class QdrantDB:
+    """
+    Client for interacting with Qdrant vector database.
+
+    This class provides methods for managing collections, indexes, and vector operations
+    in a Qdrant database. It handles vector storage, search, and filtering operations.
+    """
     def __init__(
         self,
         host: str = os.getenv("QDRANT_HOST", "localhost"),
