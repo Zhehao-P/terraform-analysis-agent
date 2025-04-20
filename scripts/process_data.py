@@ -12,6 +12,8 @@ from common.utils import (
     setup_logging,
     get_embedding_function,
 )
+import asyncio
+from typing import List
 
 logger = setup_logging(__name__)
 
@@ -23,8 +25,8 @@ BASE_DIR = Path(__file__).parent.parent
 # Data directories
 GITHUB_DIR = os.getenv("GITHUB_DIR", "data/github")
 
-MAX_CHARS = 1000
-OVERLAP = 100
+MAX_CHARS = 8000
+OVERLAP = 1000
 
 
 class FileTypeMappedExtension(Enum):
@@ -53,7 +55,47 @@ def get_file_type(file_relative_path: Path) -> FileType:
             return FileType.NOT_SUPPORTED
 
 
-def process_data(qdrant_db: QdrantDB):
+async def process_file(file_path: str, repo_dir: Path, qdrant_db: QdrantDB) -> None:
+    """Process a single file and upload to Qdrant."""
+    repo_name = repo_dir.name
+    relative_path = os.path.relpath(file_path, str(repo_dir))
+    relative_path = os.path.join(repo_name, relative_path)
+    file_type = get_file_type(Path(relative_path))
+
+    if file_type == FileType.NOT_SUPPORTED:
+        logger.debug(f"Skipping unknown file type: {relative_path}")
+        return
+
+    last_modified = str(os.path.getmtime(file_path))
+
+    with open(file_path, "r", encoding="utf-8") as f:
+        text = f.read()
+        start = 0
+        chunks = []
+        while start < len(text):
+            end = start + MAX_CHARS
+            chunks.append(text[start:end])
+            start += MAX_CHARS - OVERLAP
+
+    embedded_chunks = qdrant_db.embed_fn(chunks)
+    points = [
+        PointStruct(
+            id=repo_name + "_" + str(uuid.uuid4()),
+            vector=embedded_chunk,
+            payload={
+                PayloadField.FILE_TYPE.field_name: file_type.value,
+                PayloadField.FILE_PATH.field_name: relative_path,
+                PayloadField.LAST_MODIFIED.field_name: last_modified,
+                PayloadField.REPO.field_name: repo_name,
+                PayloadField.CONTENT.field_name: chunk,
+            },
+        )
+        for chunk, embedded_chunk in zip(chunks, embedded_chunks)
+    ]
+    await qdrant_db.upsert_vectors(points=points)
+
+
+async def process_data(qdrant_db: QdrantDB):
     repo_dirs = [d for d in Path(GITHUB_DIR).iterdir() if d.is_dir()]
 
     if not repo_dirs:
@@ -62,61 +104,23 @@ def process_data(qdrant_db: QdrantDB):
 
     logger.info(f"Found {len(repo_dirs)} repositories to process in {GITHUB_DIR}")
 
-    # Process each repository
+    tasks: List[asyncio.Task] = []
     for repo_dir in repo_dirs:
-        repo_name = repo_dir.name
-        repo_start_time = datetime.datetime.now()
-        logger.info(f"Processing repository: {repo_name}, started at {repo_start_time}")
+        logger.info(f"Processing repository: {repo_dir.name}")
 
         for root, _, files in os.walk(str(repo_dir)):
             for file in files:
                 file_path = os.path.join(root, file)
-                # Get the relative path from repo_dir
-                relative_path = os.path.relpath(file_path, str(repo_dir))
-                # Prepend the repository name to the path
-                relative_path = os.path.join(repo_name, relative_path)
-                file_type = get_file_type(Path(relative_path))
+                task = asyncio.create_task(process_file(file_path, repo_dir, qdrant_db))
+                tasks.append(task)
 
-                if file_type == FileType.NOT_SUPPORTED:
-                    logger.debug(f"Skipping unknown file type: {relative_path}")
-                    continue
-
-                # Get file last modification time
-                last_modified = str(os.path.getmtime(file_path))
-
-                # Process the file
-                with open(file_path, "r", encoding="utf-8") as f:
-                    text = f.read()
-                    start = 0
-                    chunks = []
-                    while start < len(text):
-                        end = start + MAX_CHARS
-                        chunks.append(text[start:end])
-                        start += MAX_CHARS - OVERLAP
-
-                points = [
-                    PointStruct(
-                        id=str(uuid.uuid4()),
-                        vector=qdrant_db.embed_fn(chunks),
-                        payload={
-                            PayloadField.FILE_TYPE.field_name: file_type.value,
-                            PayloadField.FILE_PATH.field_name: relative_path,
-                            PayloadField.LAST_MODIFIED.field_name: last_modified,
-                            PayloadField.REPO.field_name: repo_name,
-                            PayloadField.CONTENT.field_name: chunk,
-                        },
-                    )
-                    for chunk in chunks
-                ]
-                logger.debug(f"Processing {points}")
-
-                qdrant_db.upsert_vectors(points=points)
+    await asyncio.gather(*tasks, return_exceptions=True)
 
 
 def main():
     embed_function = get_embedding_function()
     qdrant_db = QdrantDB(embed_fn=embed_function)
-    process_data(qdrant_db)
+    asyncio.run(process_data(qdrant_db))
 
 
 if __name__ == "__main__":
