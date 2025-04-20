@@ -161,6 +161,7 @@ def main():
     embed_function = get_embedding_function()
     qdrant_db = QdrantDB(embed_fn=embed_function)
     asyncio.run(process_data(qdrant_db))
+    qdrant_db.build_payload_index()
 
 
 if __name__ == "__main__":
