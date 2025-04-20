@@ -7,7 +7,7 @@ This module provides common functionality for logging, embeddings, and Qdrant da
 import os
 import logging
 from enum import Enum
-from openai import OpenAI
+from openai import AsyncOpenAI
 from qdrant_client import QdrantClient
 from qdrant_client.http.models import (
     Distance,
@@ -92,9 +92,9 @@ def get_embedding_function():
     logger.info("Using embedding model: %s", embedding_model)
 
     # Create OpenAI client
-    client = OpenAI(api_key=api_key, base_url=api_base)
+    client = AsyncOpenAI(api_key=api_key, base_url=api_base)
 
-    def embed_batch(texts: list[str]) -> list[list[float]]:
+    async def embed_batch(texts: list[str]) -> list[list[float]]:
         """
         Create embeddings for a batch of texts.
 
@@ -104,7 +104,7 @@ def get_embedding_function():
         Returns:
             List of embedding vectors
         """
-        response = client.embeddings.create(
+        response = await client.embeddings.create(
             input=texts,
             model=embedding_model,
             dimensions=dimensions,
@@ -274,19 +274,22 @@ class QdrantDB:
             collection_name=self.collection_name, points_selector={"points": ids}
         )
 
-    def check_metadata_exists(self, metadata_filter: Filter) -> bool:
+    def check_metadata_exists(self, filter_selector: Filter) -> bool:
         """
-        Check if entries matching the given point selector exist in the database.
+        Check if entries matching the given filter conditions exist in the database.
 
         Args:
-            points_selector: Dictionary of point selector conditions
+            filter_selector: Filter conditions to check
 
         Returns:
             True if entries exist, False otherwise
         """
-        result = self.client.scroll(self.collection_name, metadata_filter, 1)
-
-        return len(result.points) > 0
+        result = self.client.scroll(
+            collection_name=self.collection_name,
+            scroll_filter=filter_selector,
+            limit=1,
+        )
+        return len(result[0]) > 0  # result is a tuple of (points, offset)
 
     def delete_vectors_by_filter(self, metadata_filter: Filter):
         """

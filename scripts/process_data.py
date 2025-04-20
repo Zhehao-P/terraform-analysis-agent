@@ -119,7 +119,7 @@ async def process_file(
             chunks.append(text[start:end])
             start += MAX_CHARS - OVERLAP
 
-    embedded_chunks = qdrant_db.embed_fn(chunks)
+    embedded_chunks = await qdrant_db.embed_fn(chunks)
     points = [
         PointStruct(
             id=str(uuid.uuid4()),
@@ -136,7 +136,7 @@ async def process_file(
     ]
 
     logger.debug("Upsert points: %s", points)
-    return await qdrant_db.upsert_vectors(points=points)
+    return qdrant_db.upsert_vectors(points=points)
 
 
 async def process_data(qdrant_db: QdrantDB) -> str:
@@ -170,13 +170,24 @@ async def process_data(qdrant_db: QdrantDB) -> str:
                     try:
                         response = await process_file(path, repo, qdrant_db)
                         logger.debug("Upsert response: %s", response)
+                    except Exception as e:
+                        logger.error("Error processing file %s: %s", path, str(e))
+                        raise
                     finally:
                         progress_bar.update(1)
 
                 tasks.append(asyncio.create_task(wrapped_task()))
     progress_bar.total = len(tasks)
-    await asyncio.gather(*tasks, return_exceptions=True)
+
+    results = await asyncio.gather(*tasks, return_exceptions=True)
     progress_bar.close()
+
+    errors = [r for r in results if isinstance(r, Exception)]
+    if errors:
+        error_msg = f"Processing completed with {len(errors)} errors"
+        logger.error(error_msg)
+        return error_msg
+
     return "Processing completed successfully"
 
 
