@@ -62,10 +62,10 @@ Extract the Following Information:
 
 def get_embedding_function():
     """
-    Create and return an embedding function using OpenAI's API.
+    Create and return an async embedding function using OpenAI's API.
 
     Returns:
-        A function that takes text and returns embeddings
+        An async function that takes a list of texts and returns their embeddings
 
     Raises:
         ValueError: If required API configuration is missing
@@ -96,13 +96,16 @@ def get_embedding_function():
 
     async def embed_batch(texts: list[str]) -> list[list[float]]:
         """
-        Create embeddings for a batch of texts.
+        Create embeddings for a batch of texts asynchronously.
 
         Args:
             texts: List of texts to embed
 
         Returns:
             List of embedding vectors
+
+        Raises:
+            Exception: If embedding creation fails
         """
         response = await client.embeddings.create(
             input=texts,
@@ -185,7 +188,7 @@ class QdrantDB:
             host: Qdrant server host
             port: Qdrant server port
             collection_name: Name of the collection to use
-            embed_fn: Optional embedding function
+            embed_fn: Optional async embedding function
         """
         self.client = QdrantClient(host=host, port=port)
         self.collection_name = collection_name
@@ -201,6 +204,9 @@ class QdrantDB:
 
         Args:
             vector_size: Size of the vector embeddings
+
+        Returns:
+            Collection information
         """
         # Check if collection exists using built-in method
         if not self.client.collection_exists(self.collection_name):
@@ -218,6 +224,7 @@ class QdrantDB:
     def build_payload_index(self):
         """
         Create payload indexes for the collection's fields.
+        Creates indexes for all fields defined in PayloadField enum.
         """
         for field in PayloadField:
             self.client.create_payload_index(
@@ -229,13 +236,13 @@ class QdrantDB:
 
     def upsert_vectors(self, points: list[PointStruct]):
         """
-        Upsert vectors to the collection.
+        Upsert vectors to the collection synchronously.
 
         Args:
             points: List of PointStruct objects containing vector data
 
         Returns:
-            List of IDs for the upsert points
+            UpdateResult containing operation status
         """
         return self.client.upsert(collection_name=self.collection_name, points=points)
 
@@ -251,7 +258,7 @@ class QdrantDB:
         Args:
             query_vector: Vector to search for
             limit: Maximum number of results to return
-            filters: Optional filter conditions
+            metadata_filter: Optional filter conditions
 
         Returns:
             Search results matching the query
@@ -293,10 +300,10 @@ class QdrantDB:
 
     def delete_vectors_by_filter(self, metadata_filter: Filter):
         """
-        Delete vectors matching the given point selector.
+        Delete vectors matching the given filter conditions.
 
         Args:
-            points_selector: Dictionary of point selector conditions
+            metadata_filter: Filter conditions for deletion
         """
         self.client.delete(
             self.collection_name,
