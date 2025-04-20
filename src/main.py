@@ -1,18 +1,20 @@
-from mcp.server.fastmcp import FastMCP, Context
+"""
+This module contains the main entry point for the MCP server.
+It defines the MCP server and the tools it can use.
+"""
+
+import os
+import asyncio
 from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
-import chromadb
-import os
-import asyncio
-from pathlib import Path
-from qdrant_client.models import Filter, FieldCondition, MatchValue, MatchText
+from typing import Optional
 from dotenv import load_dotenv
+from mcp.server.fastmcp import FastMCP, Context
+from qdrant_client.models import Filter, FieldCondition, MatchText
 from common.utils import (
     PayloadField,
     QdrantDB,
-    FileType,
-    PointStruct,
     setup_logging,
     get_embedding_function,
 )
@@ -26,9 +28,11 @@ logger = setup_logging()
 
 GITHUB_DIR = os.getenv("GITHUB_DIR", "data/github")
 
+
 @dataclass
 class RepoContext:
     """Context for managing repository content storage and retrieval."""
+
     db_client: QdrantDB
 
 
@@ -52,6 +56,7 @@ async def mcp_lifespan(server: FastMCP) -> AsyncIterator[RepoContext]:
         # No explicit persistence needed - PersistentClient handles this automatically
         logger.info("Shutting down qdrant client")
 
+
 # Initialize FastMCP server
 mcp = FastMCP(
     "repo-analysis-agent",
@@ -61,49 +66,83 @@ mcp = FastMCP(
     port=os.getenv("PORT", "8000"),
 )
 
+
 @mcp.tool()
 async def analyze_terraform_resource(
-    ctx: Context, resource_name: str, n_results: int = 3, exclude_file_paths: list[str] = []
+    ctx: Context,
+    keyword: str,
+    n_results: int = 3,
+    exclude_file_paths: Optional[list[str]] = None,
+    file_type: str | None = None,
 ) -> str:
-    """Find examples and documentation for Terraform resources from indexed repositories.
+    """Search for keyword occurrences in indexed Terraform files and documentation.
 
-    This tool performs semantic search against previously ingested Terraform code to find
-    examples of how specific resources are used in real-world configurations.
+    This tool performs a keyword-based search against previously ingested code and
+    documentation. It returns the entire content of files containing the keyword,
+    with the keyword highlighted. The keyword can be either a Terraform resource
+    name (e.g., "aviatrix_account") or an error message to find relevant examples
+    and solutions.
 
-    First ingest one or more repositories using the ingest_github_repo tool, then use this tool
-    to search for specific Terraform resources (e.g., "aws_s3_bucket", "azurerm_virtual_network").
+    First ingest one or more repositories using the ingest_github_repo tool, then
+    use this tool to search for specific keywords (e.g., "aviatrix_account",
+    "Invalid provider configuration").
 
     Args:
         ctx: The MCP server context (automatically provided, no need to specify)
-        resource_name: The Terraform resource type to find examples for (e.g., "aws_s3_bucket")
-        n_results: Number of example files to return (default: 3)
+        keyword: The keyword to search for in files and documentation (can be a
+                resource name or error message)
+        n_results: Maximum number of files to return (default: 3)
+        exclude_file_paths: List of file paths to exclude from search results
+                          (default: None)
+        file_type: Optional filter for file type ("code" or "documentation")
+                 (default: None)
 
     Returns:
-        Example code snippets and configurations for the specified Terraform resource.
+        A formatted string containing:
+        - List of files where the keyword was found
+        - Full content of each matching file with keyword highlighted
+        - Error message if no results found or if an error occurred
+
+    Raises:
+        Exception: If there is an error during the search or file reading process
     """
     try:
         db_client = ctx.request_context.lifespan_context.db_client
+        exclude_file_paths = exclude_file_paths or []
 
         # Log the search query
         logger.info(
-            f"Searching for Terraform resource: {resource_name}, requesting {n_results} results"
+            "Searching for keyword: %s, requesting %d results", keyword, n_results
         )
 
-        file_paths=[]
+        # Build the filter conditions
+        must_conditions = [
+            FieldCondition(
+                key=PayloadField.CONTENT.field_name,
+                match=MatchText(text=keyword),
+            ),
+        ]
+
+        # Add file type filter if specified
+        if file_type:
+            must_conditions.append(
+                FieldCondition(
+                    key=PayloadField.FILE_TYPE.field_name,
+                    match=MatchText(text=file_type),
+                )
+            )
+
+        file_paths = []
         while len(file_paths) < n_results:
             metadata_filter = Filter(
-                must=[
-                    FieldCondition(
-                        key=PayloadField.CONTENT.field_name,
-                        match=MatchText(text=resource_name),
-                    ),
-                ],
+                must=must_conditions,
                 must_not=[
                     FieldCondition(
                         key=PayloadField.FILE_PATH.field_name,
                         match=MatchText(value=file_path),
-                    ) for file_path in exclude_file_paths
-                ]
+                    )
+                    for file_path in exclude_file_paths
+                ],
             )
             if file_path := db_client.search_vectors(metadata_filter=metadata_filter):
                 file_paths.append(file_path)
@@ -112,25 +151,35 @@ async def analyze_terraform_resource(
 
         # Check if we found any results
         if len(file_paths) == 0:
-            logger.info(f"No examples found for resource: {resource_name}")
-            return f"No examples found for Terraform resource '{resource_name}'. Try use another keyword."
+            logger.info("No files found containing keyword: %s", keyword)
+            return f"No files found containing '{keyword}'. Try another keyword."
 
-        response = f"Key words found in following files: {','.join(file_paths)}\n"
+        response = f"Found {len(file_paths)} files containing '{keyword}':\n"
         # Format the response
         for file_path in file_paths:
-            response += f"### {file_path} content starts\n"
-            path_to_file = os.path.join(GITHUB_DIR, file_path)
-            with open(path_to_file, "r", encoding="utf-8") as f:
-                response += f.read()
-            response += f"### {file_path} content ends\n"
+            try:
+                response += f"\n### File: {file_path}\n"
+                path_to_file = os.path.join(GITHUB_DIR, file_path)
+                with open(path_to_file, "r", encoding="utf-8") as f:
+                    content = f.read()
+                    # Highlight the keyword in the content
+                    highlighted_content = content.replace(keyword, f"**{keyword}**")
+                    response += highlighted_content
+                response += f"\n### End of {file_path}\n"
+            except Exception as e:
+                logger.error("Error reading file %s: %s", file_path, str(e))
+                response += f"\nError reading file {file_path}: {str(e)}\n"
 
         return response
     except Exception as e:
-        logger.error(f"Error searching for Terraform resource: {str(e)}", exc_info=True)
-        return f"Error searching for Terraform resource: {str(e)}"
+        logger.error("Error searching for keyword: %s", str(e), exc_info=True)
+        return f"Error searching for keyword: {str(e)}"
 
 
 async def main():
+    """
+    Main entry point for the MCP server.
+    """
     transport = os.getenv("TRANSPORT", "sse")
 
     if transport == "sse":
