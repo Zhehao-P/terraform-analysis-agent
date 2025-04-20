@@ -37,6 +37,7 @@ GITHUB_DIR = os.getenv("GITHUB_DIR", "data/github")
 # Processing configuration
 MAX_CHARS = 8000
 OVERLAP = 1000
+CHUNK_BATCH_SIZE = 50
 MAX_CONCURRENT_TASKS = int(os.getenv("MAX_CONCURRENT_TASKS", "10"))
 
 
@@ -76,6 +77,7 @@ async def process_file(
 ) -> list[str]:
     """
     Process a single file and upload to Qdrant asynchronously.
+    Processes file in chunks of maximum 50 at a time to manage memory and API limits.
 
     Args:
         file_path: Full path to the file
@@ -129,24 +131,30 @@ async def process_file(
             chunks.append(text[start:end])
             start += MAX_CHARS - OVERLAP
 
-    embedded_chunks = await qdrant_db.embed_fn(chunks)
-    points = [
-        PointStruct(
-            id=str(uuid.uuid4()),
-            vector=embedded_chunk,
-            payload={
-                PayloadField.FILE_TYPE.field_name: file_type.value,
-                PayloadField.FILE_PATH.field_name: relative_path,
-                PayloadField.LAST_MODIFIED.field_name: last_modified,
-                PayloadField.REPO.field_name: repo_name,
-                PayloadField.CONTENT.field_name: chunk,
-            },
-        )
-        for chunk, embedded_chunk in zip(chunks, embedded_chunks)
-    ]
+    all_points = []
+    for i in range(0, len(chunks), CHUNK_BATCH_SIZE):
+        batch_chunks = chunks[i : i + CHUNK_BATCH_SIZE]
+        logger.debug("Processing batch of %d chunks", len(batch_chunks))
 
-    logger.debug("Upsert points: %s", points)
-    return qdrant_db.upsert_vectors(points=points)
+        embedded_chunks = await qdrant_db.embed_fn(batch_chunks)
+        batch_points = [
+            PointStruct(
+                id=str(uuid.uuid4()),
+                vector=embedded_chunk,
+                payload={
+                    PayloadField.FILE_TYPE.field_name: file_type.value,
+                    PayloadField.FILE_PATH.field_name: relative_path,
+                    PayloadField.LAST_MODIFIED.field_name: last_modified,
+                    PayloadField.REPO.field_name: repo_name,
+                    PayloadField.CONTENT.field_name: chunk,
+                },
+            )
+            for chunk, embedded_chunk in zip(batch_chunks, embedded_chunks)
+        ]
+        all_points.extend(batch_points)
+
+    logger.debug("Upsert points: %s", all_points)
+    return qdrant_db.upsert_vectors(points=all_points)
 
 
 async def process_data(qdrant_db: QdrantDB) -> str:
