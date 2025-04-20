@@ -141,13 +141,28 @@ class FileType(Enum):
 class PayloadField(Enum):
     """
     Enum for payload fields and their schema types.
+    Each member is a tuple of (field_name, schema_type).
     """
 
-    FILE_TYPE = PayloadSchemaType.KEYWORD
-    FILE_PATH = PayloadSchemaType.KEYWORD
-    REPO = PayloadSchemaType.KEYWORD
-    LAST_MODIFIED = PayloadSchemaType.DATETIME
-    CONTENT = PayloadSchemaType.TEXT
+    FILE_TYPE = ("file_type", PayloadSchemaType.KEYWORD)
+    FILE_PATH = ("file_path", PayloadSchemaType.KEYWORD)
+    REPO = ("repo", PayloadSchemaType.KEYWORD)
+    LAST_MODIFIED = ("last_modified", PayloadSchemaType.DATETIME)
+    CONTENT = ("content", PayloadSchemaType.TEXT)
+
+    @property
+    def field_name(self) -> str:
+        """
+        Return the field name from the enum value tuple.
+        """
+        return self.value[0]
+
+    @property
+    def schema_type(self) -> PayloadSchemaType:
+        """
+        Return the schema type from the enum value tuple.
+        """
+        return self.value[1]
 
 
 class QdrantDB:
@@ -209,10 +224,10 @@ class QdrantDB:
         for field in PayloadField:
             self.client.create_payload_index(
                 collection_name=self.collection_name,
-                field_name=field.name.lower(),
-                field_schema=field.value,
+                field_name=field.field_name,
+                field_schema=field.schema_type,
             )
-            logger.info("Created index for field %s", field.name.lower())
+            logger.info("Created index for field %s", field.field_name)
 
     def upsert_vectors(self, points: list[PointStruct]):
         """

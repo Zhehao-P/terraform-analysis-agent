@@ -94,37 +94,23 @@ def process_data(qdrant_db: QdrantDB):
                         chunks.append(text[start:end])
                         start += MAX_CHARS - OVERLAP
 
-                # Debug log all values
-                logger.info("File type: %s", file_type.value)
-                logger.info("Relative path: %s", relative_path)
-                logger.info("Last modified: %s", last_modified)
-                logger.info("Repo name: %s", repo_name)
-                logger.info("Content chunk: %s", chunks[0][:50] + "..." if len(chunks[0]) > 50 else chunks[0])
-
                 points = [
                     PointStruct(
                         id=str(uuid.uuid4()),
-                        vector=[0] * 1024,
+                        vector=qdrant_db.embed_fn(chunks),
                         payload={
-                            PayloadField.FILE_TYPE.name.lower(): file_type.value,
-                            PayloadField.FILE_PATH.name.lower(): relative_path,
-                            PayloadField.LAST_MODIFIED.name.lower(): last_modified,
-                            PayloadField.REPO.name.lower(): repo_name,
-                            PayloadField.CONTENT.name.lower(): chunk,
+                            PayloadField.FILE_TYPE.field_name: file_type.value,
+                            PayloadField.FILE_PATH.field_name: relative_path,
+                            PayloadField.LAST_MODIFIED.field_name: last_modified,
+                            PayloadField.REPO.field_name: repo_name,
+                            PayloadField.CONTENT.field_name: chunk,
                         },
                     )
                     for chunk in chunks
                 ]
-
-                # Log the first point's payload for verification
-                if points:
-                    logger.info("Storing point with payload: %s", points[0].payload)
+                logger.debug(f"Processing {points}")
 
                 qdrant_db.upsert_vectors(points=points)
-
-    import pdb
-
-    pdb.set_trace()
 
 
 def main():
