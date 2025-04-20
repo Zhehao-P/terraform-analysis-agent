@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import uuid
 from dotenv import load_dotenv
+from tqdm import tqdm
 from common.utils import (
     PayloadField,
     QdrantDB,
@@ -66,6 +67,8 @@ async def process_file(file_path: str, repo_dir: Path, qdrant_db: QdrantDB) -> N
         logger.debug(f"Skipping unknown file type: {relative_path}")
         return
 
+    tqdm.write(f"Processing file: {relative_path}")
+
     last_modified = str(os.path.getmtime(file_path))
 
     with open(file_path, "r", encoding="utf-8") as f:
@@ -105,16 +108,23 @@ async def process_data(qdrant_db: QdrantDB):
     logger.info(f"Found {len(repo_dirs)} repositories to process in {GITHUB_DIR}")
 
     tasks: List[asyncio.Task] = []
+    progress_bar = tqdm(total=0, desc="Processing files")
     for repo_dir in repo_dirs:
         logger.info(f"Processing repository: {repo_dir.name}")
 
         for root, _, files in os.walk(str(repo_dir)):
             for file in files:
                 file_path = os.path.join(root, file)
-                task = asyncio.create_task(process_file(file_path, repo_dir, qdrant_db))
-                tasks.append(task)
+                async def wrapped_task(path=file_path, repo=repo_dir):
+                    try:
+                        await process_file(path, repo, qdrant_db)
+                    finally:
+                        progress_bar.update(1)
 
+                tasks.append(asyncio.create_task(wrapped_task()))
+    progress_bar.total = len(tasks)
     await asyncio.gather(*tasks, return_exceptions=True)
+    progress_bar.close()
 
 
 def main():

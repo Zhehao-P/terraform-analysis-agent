@@ -21,7 +21,7 @@ from qdrant_client.http.models import (
 )
 
 
-def setup_logging(module_name="terraform-analysis"):
+def setup_logging(module_name="terraform-analysis") -> logging.Logger:
     """
     Set up basic logging configuration.
 
@@ -31,20 +31,21 @@ def setup_logging(module_name="terraform-analysis"):
     Returns:
         A configured logger instance
     """
-    # Check if DEBUG environment variable is set
     debug_mode = os.getenv("DEBUG") is not None
     log_level = logging.DEBUG if debug_mode else logging.INFO
 
-    # Configure logging
-    if not logging.getLogger().handlers:
-        logging.basicConfig(
-            level=log_level,
-            format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        )
-
-    # Get the logger and ensure it has the right level
     logger_obj = logging.getLogger(module_name)
     logger_obj.setLevel(log_level)
+
+    if not logger_obj.handlers:
+        handler = logging.StreamHandler()
+        formatter = logging.Formatter(
+            fmt="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+            datefmt="%H:%M:%S"
+        )
+        handler.setFormatter(formatter)
+        logger_obj.addHandler(handler)
+
     return logger_obj
 
 
