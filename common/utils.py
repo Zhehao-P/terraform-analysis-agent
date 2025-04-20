@@ -14,10 +14,7 @@ from qdrant_client.http.models import (
     VectorParams,
     PointStruct,
     Filter,
-    FieldCondition,
-    MatchValue,
     PayloadSchemaType,
-    FilterSelector,
 )
 
 
@@ -41,7 +38,7 @@ def setup_logging(module_name="terraform-analysis") -> logging.Logger:
         handler = logging.StreamHandler()
         formatter = logging.Formatter(
             fmt="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-            datefmt="%H:%M:%S"
+            datefmt="%H:%M:%S",
         )
         handler.setFormatter(formatter)
         logger_obj.addHandler(handler)
@@ -243,7 +240,10 @@ class QdrantDB:
         return self.client.upsert(collection_name=self.collection_name, points=points)
 
     def search_vectors(
-        self, query_vector: list[float], limit: int = 10, points_selector: FilterSelector | None = None
+        self,
+        query_vector: list[float],
+        limit: int = 10,
+        metadata_filter: Filter | None = None,
     ):
         """
         Search for similar vectors in the collection.
@@ -260,7 +260,7 @@ class QdrantDB:
             collection_name=self.collection_name,
             query_vector=query_vector,
             limit=limit,
-            query_filter=points_selector,
+            query_filter=metadata_filter,
         )
 
     def delete_vectors(self, ids: list[str]):
@@ -274,7 +274,7 @@ class QdrantDB:
             collection_name=self.collection_name, points_selector={"points": ids}
         )
 
-    def check_metadata_exists(self, points_selector: FilterSelector) -> bool:
+    def check_metadata_exists(self, metadata_filter: Filter) -> bool:
         """
         Check if entries matching the given point selector exist in the database.
 
@@ -284,15 +284,11 @@ class QdrantDB:
         Returns:
             True if entries exist, False otherwise
         """
-        result = self.client.scroll(
-            collection_name=self.collection_name,
-            filter=points_selector,
-            limit=1,
-        )
+        result = self.client.scroll(self.collection_name, metadata_filter, 1)
 
         return len(result.points) > 0
 
-    def delete_vectors_by_filter(self, points_selector: FilterSelector):
+    def delete_vectors_by_filter(self, metadata_filter: Filter):
         """
         Delete vectors matching the given point selector.
 
@@ -300,6 +296,6 @@ class QdrantDB:
             points_selector: Dictionary of point selector conditions
         """
         self.client.delete(
-            collection_name=self.collection_name,
-            points_selector=points_selector,
+            self.collection_name,
+            metadata_filter,
         )

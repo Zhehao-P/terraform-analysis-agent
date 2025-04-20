@@ -1,6 +1,7 @@
 """
 Process data from GitHub repositories and upload to Qdrant.
 """
+
 import asyncio
 import datetime
 from enum import Enum
@@ -9,6 +10,7 @@ from pathlib import Path
 import uuid
 from dotenv import load_dotenv
 from tqdm import tqdm
+from qdrant_client.models import Filter, FieldCondition, MatchValue
 from common.utils import (
     PayloadField,
     QdrantDB,
@@ -17,8 +19,6 @@ from common.utils import (
     setup_logging,
     get_embedding_function,
 )
-from qdrant_client.models import FilterSelector, Filter, FieldCondition, MatchValue
-
 
 logger = setup_logging(__name__)
 
@@ -38,6 +38,7 @@ class FileTypeMappedExtension(Enum):
     """
     Enum for file types mapped to their extensions.
     """
+
     CODE = {".tf", ".go"}
     DOCUMENT = {".md"}
 
@@ -63,7 +64,9 @@ def get_file_type(file_relative_path: Path) -> FileType:
             return FileType.NOT_SUPPORTED
 
 
-async def process_file(file_path: str, repo_dir: Path, qdrant_db: QdrantDB) -> list[str]:
+async def process_file(
+    file_path: str, repo_dir: Path, qdrant_db: QdrantDB
+) -> list[str]:
     """
     Process a single file and upload to Qdrant.
 
@@ -82,30 +85,28 @@ async def process_file(file_path: str, repo_dir: Path, qdrant_db: QdrantDB) -> l
         os.path.getmtime(file_path), tz=datetime.timezone.utc
     ).isoformat()
 
-    filter_selector = FilterSelector(
-        filter=Filter(
-            must=[
-                FieldCondition(
-                    key=PayloadField.FILE_PATH.field_name,
-                    match=MatchValue(value=relative_path)
-                ),
-                FieldCondition(
-                    key=PayloadField.LAST_MODIFIED.field_name,
-                    match=MatchValue(value=last_modified)
-                )
-            ]
-        )
+    metadata_filter = Filter(
+        must=[
+            FieldCondition(
+                key=PayloadField.FILE_PATH.field_name,
+                match=MatchValue(value=relative_path),
+            ),
+            FieldCondition(
+                key=PayloadField.LAST_MODIFIED.field_name,
+                match=MatchValue(value=last_modified),
+            ),
+        ]
     )
 
     if file_type == FileType.NOT_SUPPORTED:
         logger.debug("Skipping unknown file type: %s", relative_path)
         return []
 
-    if qdrant_db.check_metadata_exists(filter_selector):
+    if qdrant_db.check_metadata_exists(metadata_filter):
         logger.debug("Skipping existing file: %s", relative_path)
         return []
 
-    qdrant_db.delete_vectors_by_filter(filter_selector)
+    qdrant_db.delete_vectors_by_filter(metadata_filter)
 
     logger.info("Processing file: %s", relative_path)
 
@@ -164,6 +165,7 @@ async def process_data(qdrant_db: QdrantDB) -> str:
         for root, _, files in os.walk(str(repo_dir)):
             for file in files:
                 file_path = os.path.join(root, file)
+
                 async def wrapped_task(path=file_path, repo=repo_dir):
                     try:
                         response = await process_file(path, repo, qdrant_db)
