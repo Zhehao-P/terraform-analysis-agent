@@ -1,4 +1,7 @@
-import datetime
+"""
+Process data from GitHub repositories and upload to Qdrant.
+"""
+import asyncio
 from enum import Enum
 import os
 from pathlib import Path
@@ -13,8 +16,6 @@ from common.utils import (
     setup_logging,
     get_embedding_function,
 )
-import asyncio
-from typing import List
 
 logger = setup_logging(__name__)
 
@@ -31,6 +32,9 @@ OVERLAP = 1000
 
 
 class FileTypeMappedExtension(Enum):
+    """
+    Enum for file types mapped to their extensions.
+    """
     CODE = {".tf", ".go"}
     DOCUMENT = {".md"}
 
@@ -56,18 +60,28 @@ def get_file_type(file_relative_path: Path) -> FileType:
             return FileType.NOT_SUPPORTED
 
 
-async def process_file(file_path: str, repo_dir: Path, qdrant_db: QdrantDB) -> None:
-    """Process a single file and upload to Qdrant."""
+async def process_file(file_path: str, repo_dir: Path, qdrant_db: QdrantDB) -> list[str]:
+    """
+    Process a single file and upload to Qdrant.
+
+    Args:
+        file_path: Full path to the file
+        repo_dir: Path to the repository directory
+        qdrant_db: Qdrant database instance
+
+    Returns:
+        List of IDs for the upsert points
+    """
     repo_name = repo_dir.name
     relative_path = os.path.relpath(file_path, str(repo_dir))
     relative_path = os.path.join(repo_name, relative_path)
     file_type = get_file_type(Path(relative_path))
 
     if file_type == FileType.NOT_SUPPORTED:
-        logger.debug(f"Skipping unknown file type: {relative_path}")
-        return
+        logger.debug("Skipping unknown file type: %s", relative_path)
+        return []
 
-    tqdm.write(f"Processing file: {relative_path}")
+    tqdm.write("Processing file: %s", relative_path)
 
     last_modified = str(os.path.getmtime(file_path))
 
@@ -83,7 +97,7 @@ async def process_file(file_path: str, repo_dir: Path, qdrant_db: QdrantDB) -> N
     embedded_chunks = qdrant_db.embed_fn(chunks)
     points = [
         PointStruct(
-            id=repo_name + "_" + str(uuid.uuid4()),
+            id=repo_name + "-" + str(uuid.uuid4()),
             vector=embedded_chunk,
             payload={
                 PayloadField.FILE_TYPE.field_name: file_type.value,
@@ -95,29 +109,41 @@ async def process_file(file_path: str, repo_dir: Path, qdrant_db: QdrantDB) -> N
         )
         for chunk, embedded_chunk in zip(chunks, embedded_chunks)
     ]
-    await qdrant_db.upsert_vectors(points=points)
+
+    logger.debug("Upsert points: %s", points)
+    return await qdrant_db.upsert_vectors(points=points)
 
 
-async def process_data(qdrant_db: QdrantDB):
+async def process_data(qdrant_db: QdrantDB) -> str:
+    """
+    Process all files in the configured GitHub directory.
+
+    Args:
+        qdrant_db: Qdrant database instance
+
+    Returns:
+        Status message indicating success or failure
+    """
     repo_dirs = [d for d in Path(GITHUB_DIR).iterdir() if d.is_dir()]
 
     if not repo_dirs:
-        logger.warning(f"No local repositories found in {GITHUB_DIR}")
-        return f"No local repositories found in {GITHUB_DIR}. Please add repositories to this directory."
+        logger.warning("No local repositories found in %s", GITHUB_DIR)
+        return f"No local repositories found in {GITHUB_DIR}."
 
-    logger.info(f"Found {len(repo_dirs)} repositories to process in {GITHUB_DIR}")
+    logger.info("Found %d repositories to process in %s", len(repo_dirs), GITHUB_DIR)
 
-    tasks: List[asyncio.Task] = []
+    tasks: list[asyncio.Task] = []
     progress_bar = tqdm(total=0, desc="Processing files")
     for repo_dir in repo_dirs:
-        logger.info(f"Processing repository: {repo_dir.name}")
+        logger.info("Processing repository: %s", repo_dir.name)
 
         for root, _, files in os.walk(str(repo_dir)):
             for file in files:
                 file_path = os.path.join(root, file)
                 async def wrapped_task(path=file_path, repo=repo_dir):
                     try:
-                        await process_file(path, repo, qdrant_db)
+                        response = await process_file(path, repo, qdrant_db)
+                        logger.debug("Upsert response: %s", response)
                     finally:
                         progress_bar.update(1)
 
@@ -125,9 +151,13 @@ async def process_data(qdrant_db: QdrantDB):
     progress_bar.total = len(tasks)
     await asyncio.gather(*tasks, return_exceptions=True)
     progress_bar.close()
+    return "Processing completed successfully"
 
 
 def main():
+    """
+    Main entry point for the script.
+    """
     embed_function = get_embedding_function()
     qdrant_db = QdrantDB(embed_fn=embed_function)
     asyncio.run(process_data(qdrant_db))
