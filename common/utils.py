@@ -1,6 +1,13 @@
+"""
+Utility functions and classes for the Terraform analysis agent.
+
+This module provides common functionality for logging, embeddings, and Qdrant database operations.
+"""
+
 import os
 import logging
 from enum import Enum
+from openai import OpenAI
 from qdrant_client import QdrantClient
 from qdrant_client.http.models import (
     Distance,
@@ -35,9 +42,9 @@ def setup_logging(module_name="terraform-analysis"):
         )
 
     # Get the logger and ensure it has the right level
-    logger = logging.getLogger(module_name)
-    logger.setLevel(log_level)
-    return logger
+    logger_obj = logging.getLogger(module_name)
+    logger_obj.setLevel(log_level)
+    return logger_obj
 
 
 # Get logger with default module name
@@ -56,7 +63,7 @@ Extract the Following Information:
 
 def get_embedding_function():
     """
-    Creates and returns an embedding function using OpenAI's API.
+    Create and return an embedding function using OpenAI's API.
 
     Returns:
         A function that takes text and returns embeddings
@@ -83,14 +90,21 @@ def get_embedding_function():
         logger.error("EMBEDDING_MODEL_CHOICE environment variable not found")
         raise ValueError("EMBEDDING_MODEL_CHOICE environment variable must be set")
 
-    logger.info(f"Using embedding model: {embedding_model}")
+    logger.info("Using embedding model: %s", embedding_model)
 
     # Create OpenAI client
-    from openai import OpenAI
-
     client = OpenAI(api_key=api_key, base_url=api_base)
 
     def embed_batch(texts: list[str]) -> list[list[float]]:
+        """
+        Create embeddings for a batch of texts.
+
+        Args:
+            texts: List of texts to embed
+
+        Returns:
+            List of embedding vectors
+        """
         response = client.embeddings.create(
             input=texts,
             model=embedding_model,
@@ -103,16 +117,35 @@ def get_embedding_function():
 
 
 class FilterType(Enum):
+    """
+    Enum for different types of filter conditions in Qdrant.
+    """
+
     MUST = "must"
     SHOULD = "should"
     MUST_NOT = "must_not"
 
 
 class FileType(Enum):
+    """
+    Enum for different types of files in the system.
+    """
+
     CODE = "code"
     DOCUMENT = "document"
     TEST = "test"
     NOT_SUPPORTED = "not_supported"
+
+
+class PayloadField(Enum):
+    """
+    Enum for payload fields and their schema types.
+    """
+
+    FILE_TYPE = PayloadSchemaType.KEYWORD
+    FILE_PATH = PayloadSchemaType.KEYWORD
+    REPO = PayloadSchemaType.KEYWORD
+    LAST_MODIFIED = PayloadSchemaType.DATETIME
 
 
 class QdrantDB:
@@ -123,6 +156,15 @@ class QdrantDB:
         collection_name: str = os.getenv("QDRANT_COLLECTION_NAME", "knowledge_db"),
         embed_fn: callable = None,
     ):
+        """
+        Initialize QdrantDB client with configuration.
+
+        Args:
+            host: Qdrant server host
+            port: Qdrant server port
+            collection_name: Name of the collection to use
+            embed_fn: Optional embedding function
+        """
         self.client = QdrantClient(host=host, port=port)
         self.collection_name = collection_name
         self.embed_fn = embed_fn
@@ -138,36 +180,30 @@ class QdrantDB:
         Args:
             vector_size: Size of the vector embeddings
         """
-        try:
-            # Check if collection exists using built-in method
-            if not self.client.collection_exists(self.collection_name):
-                # Create collection if it doesn't exist
-                self.client.create_collection(
-                    collection_name=self.collection_name,
-                    vectors_config=VectorParams(
-                        size=vector_size, distance=Distance.COSINE
-                    ),
-                )
-                logger.info(f"Created collection {self.collection_name}")
-            else:
-                logger.info(f"Collection {self.collection_name} already exists")
-        except Exception as e:
-            logger.error(f"Error ensuring collection {self.collection_name}: {str(e)}")
-            raise
+        # Check if collection exists using built-in method
+        if not self.client.collection_exists(self.collection_name):
+            # Create collection if it doesn't exist
+            self.client.create_collection(
+                collection_name=self.collection_name,
+                vectors_config=VectorParams(size=vector_size, distance=Distance.COSINE),
+            )
+            logger.info("Created collection %s", self.collection_name)
+        else:
+            logger.info("Collection %s already exists", self.collection_name)
 
         return self.client.get_collection(self.collection_name)
 
     def build_payload_index(self):
-        for field in ["file_type", "file_role", "file_name", "repo"]:
-            try:
-                self.client.create_payload_index(
-                    collection_name=self.collection_name,
-                    field_name=field,
-                    field_schema=PayloadSchemaType,
-                )
-                logger.info(f"Created index for field {field}")
-            except Exception as e:
-                logger.warning(f"Index for field {field} may already exist: {str(e)}")
+        """
+        Create payload indexes for the collection's fields.
+        """
+        for field in PayloadField:
+            self.client.create_payload_index(
+                collection_name=self.collection_name,
+                field_name=field.field_name,
+                field_schema=field.schema_type,
+            )
+            logger.info("Created index for field %s", field.field_name)
 
     def upsert_vectors(self, points: list[PointStruct]):
         """
@@ -177,15 +213,25 @@ class QdrantDB:
             points: List of PointStruct objects containing vector data
 
         Returns:
-            List of IDs for the upsert points (including auto-generated ones)
+            List of IDs for the upsert points
         """
         result = self.client.upsert(collection_name=self.collection_name, points=points)
-
         return result.ids
 
     def search_vectors(
         self, query_vector: list[float], limit: int = 10, filters: dict | None = None
     ):
+        """
+        Search for similar vectors in the collection.
+
+        Args:
+            query_vector: Vector to search for
+            limit: Maximum number of results to return
+            filters: Optional filter conditions
+
+        Returns:
+            Search results matching the query
+        """
         filter_conditions = None
         if filters:
             filter_conditions = Filter(
@@ -203,6 +249,12 @@ class QdrantDB:
         )
 
     def delete_vectors(self, ids: list[str]):
+        """
+        Delete vectors by their IDs.
+
+        Args:
+            ids: List of vector IDs to delete
+        """
         self.client.delete(
             collection_name=self.collection_name, points_selector={"points": ids}
         )
@@ -210,6 +262,12 @@ class QdrantDB:
     def delete_vectors_by_filter(
         self, filters: dict[FilterType, dict[str, str | list[str]]]
     ):
+        """
+        Delete vectors matching the given filters.
+
+        Args:
+            filters: Dictionary of filter conditions
+        """
         filter_payload = {}
 
         for filter_type, condition_dict in filters.items():
@@ -229,5 +287,6 @@ class QdrantDB:
             filter_payload[filter_type.value] = field_conditions
 
         points_selector = Filter(**filter_payload)
-
-        self.client.delete(collection_name=self.collection_name, points_selector=points_selector)
+        self.client.delete(
+            collection_name=self.collection_name, points_selector=points_selector
+        )
