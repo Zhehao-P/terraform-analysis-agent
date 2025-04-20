@@ -3,48 +3,54 @@ from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 import chromadb
-from git import Repo
 import os
 import asyncio
-import datetime
 from pathlib import Path
-from config import (
-    GITHUB_DIR,
-    PROCESS_FILE_EXTENSIONS,
+from qdrant_client.models import Filter, FieldCondition, MatchValue, MatchText
+from dotenv import load_dotenv
+from common.utils import (
+    PayloadField,
+    QdrantDB,
+    FileType,
+    PointStruct,
+    setup_logging,
+    get_embedding_function,
 )
-from utils import get_chromadb_client, setup_logging
+
+logger = setup_logging(__name__)
+
+load_dotenv()
 
 # Set up logging
 logger = setup_logging()
 
+GITHUB_DIR = os.getenv("GITHUB_DIR", "data/github")
 
 @dataclass
 class RepoContext:
     """Context for managing repository content storage and retrieval."""
-
-    chroma_client: chromadb.Client
+    db_client: QdrantDB
 
 
 @asynccontextmanager
 async def mcp_lifespan(server: FastMCP) -> AsyncIterator[RepoContext]:
-    """Manages the MCP agent lifecycle including ChromaDB persistence.
+    """Manages the MCP agent lifecycle including qdrant persistence.
 
     This function:
-    1. Uses the configured ChromaDB directory
-    2. Initializes ChromaDB with persistent storage
+    1. Uses the configured qdrant directory
+    2. Initializes qdrant with persistent storage
     3. Creates or loads the collection
     4. Handles cleanup on shutdown
     """
-    # Create and initialize the ChromaDB client with the helper function
-    logger.info("Initializing ChromaDB client")
+    logger.info("Initializing qdrant client")
+    embed_function = get_embedding_function()
+    qdrant_db = QdrantDB(embed_fn=embed_function)
 
     try:
-        yield RepoContext(chroma_client=chroma_client)
+        yield RepoContext(db_client=qdrant_db)
     finally:
         # No explicit persistence needed - PersistentClient handles this automatically
-        logger.info("Shutting down ChromaDB client")
-        pass
-
+        logger.info("Shutting down qdrant client")
 
 # Initialize FastMCP server
 mcp = FastMCP(
@@ -55,165 +61,9 @@ mcp = FastMCP(
     port=os.getenv("PORT", "8000"),
 )
 
-
-@mcp.tool()
-async def ingest_github_repo(ctx: Context) -> str:
-    """Build a searchable knowledge base from local repositories.
-
-    This tool scans all local repositories in the data/github directory and indexes their Terraform and Go files.
-    It builds a local vector database that enables semantic search for code snippets when debugging errors.
-    The tool automatically handles incremental updates - only new or modified files will be processed.
-
-    No parameters needed - all repositories in the data/github directory will be automatically processed.
-
-    Args:
-        ctx: The MCP server context (automatically provided, no need to specify)
-
-    Returns:
-        A summary of the ingestion process, including counts of indexed, updated, and skipped files.
-    """
-    start_time = datetime.datetime.now()
-    logger.info(f"Starting knowledge base ingestion at {start_time}")
-
-    try:
-        # Get the collection
-        collection = ctx.request_context.lifespan_context.chroma_client.get_collection(
-            name=CHROMA_COLLECTION_NAME
-        )
-
-        # Process all repositories in the github directory
-        total_documents = 0
-        total_skipped = 0
-        total_updated = 0
-        processed_repos = 0
-        test_skipped = 0
-
-        # Get all directories in the github directory
-        repo_dirs = [d for d in GITHUB_DIR.iterdir() if d.is_dir()]
-
-        if not repo_dirs:
-            logger.warning(f"No local repositories found in {GITHUB_DIR}")
-            return f"No local repositories found in {GITHUB_DIR}. Please add repositories to this directory."
-
-        logger.info(f"Found {len(repo_dirs)} repositories to process in {GITHUB_DIR}")
-
-        # Process each repository
-        for repo_dir in repo_dirs:
-            repo_name = repo_dir.name
-            repo_start_time = datetime.datetime.now()
-            logger.info(
-                f"Processing repository: {repo_name}, started at {repo_start_time}"
-            )
-
-            documents = []
-            metadatas = []
-            ids = []
-            skipped = 0
-            updated = 0
-            repo_test_skipped = 0
-
-            for root, _, files in os.walk(str(repo_dir)):
-                for file in files:
-                    if Path(file).suffix in PROCESS_FILE_EXTENSIONS:
-                        file_path = os.path.join(root, file)
-                        relative_path = os.path.relpath(file_path, str(repo_dir))
-
-                        # Skip test files
-                        if "test" in relative_path.lower():
-                            repo_test_skipped += 1
-                            logger.debug(f"Skipping test file: {relative_path}")
-                            continue
-
-                        # Create a unique ID that includes the repo name to avoid conflicts
-                        file_id = f"{repo_name}/{relative_path}"
-
-                        # Get file last modification time
-                        last_modified = str(os.path.getmtime(file_path))
-
-                        # Check if file already exists in collection by querying for this specific ID
-                        existing_item = collection.get(ids=[file_id])
-
-                        # If the file exists in the database (ids list not empty)
-                        if existing_item["ids"]:
-                            # Get metadata if available
-                            if (
-                                existing_item["metadatas"]
-                                and existing_item["metadatas"][0]
-                            ):
-                                existing_last_modified = existing_item["metadatas"][
-                                    0
-                                ].get("last_modified", "")
-
-                                # Compare timestamps
-                                if existing_last_modified == last_modified:
-                                    # File exists and hasn't changed, skip it
-                                    skipped += 1
-                                    logger.debug(f"Skipping unchanged file: {file_id}")
-                                    continue
-
-                            # File exists but has changed (or no timestamp), update it
-                            updated += 1
-                            logger.debug(f"Updating modified file: {file_id}")
-                            # Delete the old version
-                            collection.delete(ids=[file_id])
-                        else:
-                            logger.debug(f"Processing new file: {file_id}")
-
-                        # Process the file
-                        with open(file_path, "r", encoding="utf-8") as f:
-                            content = f.read()
-                            documents.append(content)
-                            metadatas.append(
-                                {
-                                    "repo": repo_name,
-                                    "path": relative_path,
-                                    "full_path": file_id,
-                                    "last_modified": last_modified,
-                                }
-                            )
-                            ids.append(file_id)
-
-            # Store in ChromaDB in a single batch
-            if documents:
-                logger.info(
-                    f"Adding {len(documents)} documents to collection from repository {repo_name}"
-                )
-                collection.add(documents=documents, metadatas=metadatas, ids=ids)
-                total_documents += len(documents)
-                total_skipped += skipped
-                total_updated += updated
-                test_skipped += repo_test_skipped
-                processed_repos += 1
-
-                repo_end_time = datetime.datetime.now()
-                duration = (repo_end_time - repo_start_time).total_seconds()
-                logger.info(
-                    f"Repository '{repo_name}' processed in {duration:.2f} seconds: {len(documents)} files added, {updated} updated, {skipped} skipped, {repo_test_skipped} test files skipped"
-                )
-            else:
-                logger.info(
-                    f"No documents to add from repository {repo_name} ({repo_test_skipped} test files skipped)"
-                )
-
-        end_time = datetime.datetime.now()
-        duration = (end_time - start_time).total_seconds()
-
-        if total_documents > 0:
-            result_msg = f"Local knowledge base updated: {processed_repos} repositories processed, {total_documents} total files indexed, {total_updated} updated, {total_skipped} skipped (unchanged), {test_skipped} test files skipped. Completed in {duration:.2f} seconds."
-            logger.info(result_msg)
-            return result_msg
-        else:
-            result_msg = f"No new or modified files found in any local repository. Supported extensions: {', '.join(PROCESS_FILE_EXTENSIONS)}. {test_skipped} test files were skipped. Process completed in {duration:.2f} seconds."
-            logger.info(result_msg)
-            return result_msg
-    except Exception as e:
-        logger.error(f"Error building knowledge base: {str(e)}", exc_info=True)
-        return f"Error building knowledge base: {str(e)}"
-
-
 @mcp.tool()
 async def analyze_terraform_resource(
-    ctx: Context, resource_name: str, n_results: int = 3
+    ctx: Context, resource_name: str, n_results: int = 3, exclude_file_paths: list[str] = []
 ) -> str:
     """Find examples and documentation for Terraform resources from indexed repositories.
 
@@ -232,41 +82,47 @@ async def analyze_terraform_resource(
         Example code snippets and configurations for the specified Terraform resource.
     """
     try:
-        # Get the collection
-        collection = ctx.request_context.lifespan_context.chroma_client.get_collection(
-            name=CHROMA_COLLECTION_NAME
-        )
+        db_client = ctx.request_context.lifespan_context.db_client
 
         # Log the search query
         logger.info(
             f"Searching for Terraform resource: {resource_name}, requesting {n_results} results"
         )
 
-        # Create a search query that targets Terraform resources
-        query = f"Terraform resource {resource_name} example configuration"
-
-        # Search for relevant documentation
-        results = collection.query(query_texts=[query], n_results=n_results)
+        file_paths=[]
+        while len(file_paths) < n_results:
+            metadata_filter = Filter(
+                must=[
+                    FieldCondition(
+                        key=PayloadField.CONTENT.field_name,
+                        match=MatchText(text=resource_name),
+                    ),
+                ],
+                must_not=[
+                    FieldCondition(
+                        key=PayloadField.FILE_PATH.field_name,
+                        match=MatchText(value=file_path),
+                    ) for file_path in exclude_file_paths
+                ]
+            )
+            if file_path := db_client.search_vectors(metadata_filter=metadata_filter):
+                file_paths.append(file_path)
+            else:
+                break
 
         # Check if we found any results
-        if not results["documents"] or not results["documents"][0]:
+        if len(file_paths) == 0:
             logger.info(f"No examples found for resource: {resource_name}")
-            return f"No examples found for Terraform resource '{resource_name}'. Try ingesting more repositories or check the resource name."
+            return f"No examples found for Terraform resource '{resource_name}'. Try use another keyword."
 
+        response = f"Key words found in following files: {','.join(file_paths)}\n"
         # Format the response
-        response = f"Found {len(results['documents'][0])} examples for Terraform resource `{resource_name}`:\n\n"
-
-        for i, (doc, metadata) in enumerate(
-            zip(results["documents"][0], results["metadatas"][0]), 1
-        ):
-            # Extract repo and path information
-            repo = metadata.get("repo", "unknown")
-            path = metadata.get("path", "unknown")
-
-            response += f"### Example {i}: {repo}/{path}\n\n"
-            response += "```terraform\n"
-            response += doc.strip()
-            response += "\n```\n\n"
+        for file_path in file_paths:
+            response += f"### {file_path} content starts\n"
+            path_to_file = os.path.join(GITHUB_DIR, file_path)
+            with open(path_to_file, "r", encoding="utf-8") as f:
+                response += f.read()
+            response += f"### {file_path} content ends\n"
 
         return response
     except Exception as e:
@@ -278,10 +134,10 @@ async def main():
     transport = os.getenv("TRANSPORT", "sse")
 
     if transport == "sse":
-        print(f"🚀 MCP server starting using SSE transport")
+        print("🚀 MCP server starting using SSE transport")
         await mcp.run_sse_async()
     elif transport == "stdio":
-        print(f"🚀 MCP server starting using STDIO transport")
+        print("🚀 MCP server starting using STDIO transport")
         await mcp.run_stdio_async()
     else:
         print(f"❌ Error: TRANSPORT must be either 'sse' or 'stdio', got '{transport}'")

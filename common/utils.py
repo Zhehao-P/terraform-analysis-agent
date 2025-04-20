@@ -7,6 +7,7 @@ This module provides common functionality for logging, embeddings, and Qdrant da
 import os
 import logging
 from enum import Enum
+from typing import Optional
 from openai import AsyncOpenAI
 from qdrant_client import QdrantClient
 from qdrant_client.http.models import (
@@ -248,40 +249,41 @@ class QdrantDB:
 
     def search_vectors(
         self,
-        query_vector: list[float],
-        limit: int = 10,
-        metadata_filter: Filter | None = None,
-    ):
+        query_vector: Optional[list[float]] = None,
+        metadata_filter: Optional[Filter] = None,
+    ) -> Optional[str]:
         """
-        Search for similar vectors in the collection.
+        Search for content in the database using either vector similarity or metadata filters.
+
+        This method performs a search in the Qdrant database using either a vector similarity
+        search or metadata-based filtering. It returns the file path of the first matching
+        result, or None if no matches are found.
 
         Args:
-            query_vector: Vector to search for
-            limit: Maximum number of results to return
-            metadata_filter: Optional filter conditions
+            query_vector: Vector to search for (optional)
+            metadata_filter: Filter conditions (optional)
 
         Returns:
-            Search results matching the query
+            File path of the first matching result, or None if no matches found
+
+        Raises:
+            ValueError: If neither query_vector nor metadata_filter is provided
         """
-        return self.client.search(
+        if query_vector is None and metadata_filter is None:
+            raise ValueError("Either query_vector or metadata_filter must be provided")
+
+        result = self.client.search(
             collection_name=self.collection_name,
             query_vector=query_vector,
-            limit=limit,
             query_filter=metadata_filter,
         )
+        if result is None:
+            return None
 
-    def delete_vectors(self, ids: list[str]):
-        """
-        Delete vectors by their IDs.
+        result = result.to_dict()
+        return result.get("payload", {}).get(PayloadField.FILE_PATH.field_name)
 
-        Args:
-            ids: List of vector IDs to delete
-        """
-        self.client.delete(
-            collection_name=self.collection_name, points_selector={"points": ids}
-        )
-
-    def check_metadata_exists(self, filter_selector: Filter) -> bool:
+    def check_metadata_exists(self, metadata_filter: Filter) -> bool:
         """
         Check if entries matching the given filter conditions exist in the database.
 
@@ -291,12 +293,11 @@ class QdrantDB:
         Returns:
             True if entries exist, False otherwise
         """
-        result = self.client.scroll(
+        result = self.client.count(
             collection_name=self.collection_name,
-            scroll_filter=filter_selector,
-            limit=1,
+            count_filter=metadata_filter,
         )
-        return len(result[0]) > 0  # result is a tuple of (points, offset)
+        return result.count > 0
 
     def delete_vectors_by_filter(self, metadata_filter: Filter):
         """
