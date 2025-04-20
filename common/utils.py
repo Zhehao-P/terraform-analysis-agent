@@ -17,6 +17,7 @@ from qdrant_client.http.models import (
     FieldCondition,
     MatchValue,
     PayloadSchemaType,
+    FilterSelector,
 )
 
 
@@ -146,6 +147,7 @@ class PayloadField(Enum):
     FILE_PATH = PayloadSchemaType.KEYWORD
     REPO = PayloadSchemaType.KEYWORD
     LAST_MODIFIED = PayloadSchemaType.DATETIME
+    CONTENT = PayloadSchemaType.TEXT
 
 
 class QdrantDB:
@@ -155,6 +157,7 @@ class QdrantDB:
     This class provides methods for managing collections, indexes, and vector operations
     in a Qdrant database. It handles vector storage, search, and filtering operations.
     """
+
     def __init__(
         self,
         host: str = os.getenv("QDRANT_HOST", "localhost"),
@@ -206,10 +209,10 @@ class QdrantDB:
         for field in PayloadField:
             self.client.create_payload_index(
                 collection_name=self.collection_name,
-                field_name=field.field_name,
-                field_schema=field.schema_type,
+                field_name=field.name.lower(),
+                field_schema=field.value,
             )
-            logger.info("Created index for field %s", field.field_name)
+            logger.info("Created index for field %s", field.name.lower())
 
     def upsert_vectors(self, points: list[PointStruct]):
         """
@@ -221,8 +224,7 @@ class QdrantDB:
         Returns:
             List of IDs for the upsert points
         """
-        result = self.client.upsert(collection_name=self.collection_name, points=points)
-        return result.ids
+        return self.client.upsert(collection_name=self.collection_name, points=points)
 
     def search_vectors(
         self, query_vector: list[float], limit: int = 10, filters: dict | None = None
@@ -265,34 +267,32 @@ class QdrantDB:
             collection_name=self.collection_name, points_selector={"points": ids}
         )
 
-    def delete_vectors_by_filter(
-        self, filters: dict[FilterType, dict[str, str | list[str]]]
-    ):
+    def check_metadata_exists(self, points_selector: FilterSelector) -> bool:
         """
-        Delete vectors matching the given filters.
+        Check if entries matching the given point selector exist in the database.
 
         Args:
-            filters: Dictionary of filter conditions
+            points_selector: Dictionary of point selector conditions
+
+        Returns:
+            True if entries exist, False otherwise
         """
-        filter_payload = {}
+        result = self.client.scroll(
+            collection_name=self.collection_name,
+            filter=points_selector,
+            limit=1,
+        )
 
-        for filter_type, condition_dict in filters.items():
-            field_conditions = []
-            for key, value in condition_dict.items():
-                if isinstance(value, list):
-                    field_conditions.extend(
-                        [
-                            FieldCondition(key=key, match=MatchValue(value=item))
-                            for item in value
-                        ]
-                    )
-                else:
-                    field_conditions.append(
-                        FieldCondition(key=key, match=MatchValue(value=value))
-                    )
-            filter_payload[filter_type.value] = field_conditions
+        return len(result.points) > 0
 
-        points_selector = Filter(**filter_payload)
+    def delete_vectors_by_filter(self, points_selector: FilterSelector):
+        """
+        Delete vectors matching the given point selector.
+
+        Args:
+            points_selector: Dictionary of point selector conditions
+        """
         self.client.delete(
-            collection_name=self.collection_name, points_selector=points_selector
+            collection_name=self.collection_name,
+            points_selector=points_selector,
         )

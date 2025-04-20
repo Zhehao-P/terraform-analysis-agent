@@ -1,10 +1,17 @@
 import datetime
 from enum import Enum
 import os
-import tiktoken
 from pathlib import Path
+import uuid
 from dotenv import load_dotenv
-from common.utils import QdrantDB, FileType, setup_logging, get_embedding_function
+from common.utils import (
+    PayloadField,
+    QdrantDB,
+    FileType,
+    PointStruct,
+    setup_logging,
+    get_embedding_function,
+)
 
 logger = setup_logging(__name__)
 
@@ -25,103 +32,99 @@ class FileTypeMappedExtension(Enum):
     DOCUMENT = {".md"}
 
 
-def get_file_type(file_relative_path: Path) -> str:
+def get_file_type(file_relative_path: Path) -> FileType:
+    """
+    Determine the type of file based on its extension and name.
+
+    Args:
+        file_relative_path: Path to the file
+
+    Returns:
+        FileType enum value
+    """
     match file_relative_path.suffix:
-        case _ if file_relative_path.suffix in FileTypeMappedExtension.CODE.value:
+        case suffix if suffix in FileTypeMappedExtension.CODE.value:
             return FileType.CODE
-        case _ if file_relative_path.suffix in FileTypeMappedExtension.DOCUMENT.value:
+        case suffix if suffix in FileTypeMappedExtension.DOCUMENT.value:
             return FileType.DOCUMENT
-        case _ if "test" in file_relative_path.lower():
+        case _ if "test" in file_relative_path.name.lower():
             return FileType.TEST
         case _:
             return FileType.NOT_SUPPORTED
 
 
 def process_data(qdrant_db: QdrantDB):
-    try:
-        # Process all repositories in the github directory
-        total_documents = 0
-        total_skipped = 0
-        processed_repos = 0
-        test_skipped = 0
+    repo_dirs = [d for d in Path(GITHUB_DIR).iterdir() if d.is_dir()]
 
-        # Get all directories in the github directory
-        repo_dirs = [d for d in GITHUB_DIR.iterdir() if d.is_dir()]
+    if not repo_dirs:
+        logger.warning(f"No local repositories found in {GITHUB_DIR}")
+        return f"No local repositories found in {GITHUB_DIR}. Please add repositories to this directory."
 
-        if not repo_dirs:
-            logger.warning(f"No local repositories found in {GITHUB_DIR}")
-            return f"No local repositories found in {GITHUB_DIR}. Please add repositories to this directory."
+    logger.info(f"Found {len(repo_dirs)} repositories to process in {GITHUB_DIR}")
 
-        logger.info(f"Found {len(repo_dirs)} repositories to process in {GITHUB_DIR}")
+    # Process each repository
+    for repo_dir in repo_dirs:
+        repo_name = repo_dir.name
+        repo_start_time = datetime.datetime.now()
+        logger.info(f"Processing repository: {repo_name}, started at {repo_start_time}")
 
-        # Process each repository
-        for repo_dir in repo_dirs:
-            repo_name = repo_dir.name
-            repo_start_time = datetime.datetime.now()
-            logger.info(
-                f"Processing repository: {repo_name}, started at {repo_start_time}"
-            )
+        for root, _, files in os.walk(str(repo_dir)):
+            for file in files:
+                file_path = os.path.join(root, file)
+                # Get the relative path from repo_dir
+                relative_path = os.path.relpath(file_path, str(repo_dir))
+                # Prepend the repository name to the path
+                relative_path = os.path.join(repo_name, relative_path)
+                file_type = get_file_type(Path(relative_path))
 
-            skipped = 0
-            updated = 0
+                if file_type == FileType.NOT_SUPPORTED:
+                    logger.debug(f"Skipping unknown file type: {relative_path}")
+                    continue
 
-            for root, _, files in os.walk(str(repo_dir)):
-                for file in files:
-                    file_path = os.path.join(root, file)
-                    relative_path = os.path.relpath(file_path, str(repo_dir))
-                    file_type = get_file_type(relative_path)
+                # Get file last modification time
+                last_modified = str(os.path.getmtime(file_path))
 
-                    if file_type == FileType.NOT_SUPPORTED:
-                        logger.debug(f"Skipping unknown file type: {relative_path}")
-                        continue
+                # Process the file
+                with open(file_path, "r", encoding="utf-8") as f:
+                    text = f.read()
+                    start = 0
+                    chunks = []
+                    while start < len(text):
+                        end = start + MAX_CHARS
+                        chunks.append(text[start:end])
+                        start += MAX_CHARS - OVERLAP
 
-                    # Get file last modification time
-                    last_modified = str(os.path.getmtime(file_path))
+                # Debug log all values
+                logger.info("File type: %s", file_type.value)
+                logger.info("Relative path: %s", relative_path)
+                logger.info("Last modified: %s", last_modified)
+                logger.info("Repo name: %s", repo_name)
+                logger.info("Content chunk: %s", chunks[0][:50] + "..." if len(chunks[0]) > 50 else chunks[0])
 
-                    # If the file exists in the database (ids list not empty)
-                    if existing_item["ids"]:
-                        # Get metadata if available
-                        if existing_item["metadatas"] and existing_item["metadatas"][0]:
-                            existing_last_modified = existing_item["metadatas"][0].get(
-                                "last_modified", ""
-                            )
+                points = [
+                    PointStruct(
+                        id=str(uuid.uuid4()),
+                        vector=[0] * 1024,
+                        payload={
+                            PayloadField.FILE_TYPE.name.lower(): file_type.value,
+                            PayloadField.FILE_PATH.name.lower(): relative_path,
+                            PayloadField.LAST_MODIFIED.name.lower(): last_modified,
+                            PayloadField.REPO.name.lower(): repo_name,
+                            PayloadField.CONTENT.name.lower(): chunk,
+                        },
+                    )
+                    for chunk in chunks
+                ]
 
-                            # Compare timestamps
-                            if existing_last_modified == last_modified:
-                                # File exists and hasn't changed, skip it
-                                skipped += 1
-                                logger.debug(f"Skipping unchanged file: {file_id}")
-                                continue
+                # Log the first point's payload for verification
+                if points:
+                    logger.info("Storing point with payload: %s", points[0].payload)
 
-                        # File exists but has changed (or no timestamp), update it
-                        updated += 1
-                        logger.debug(f"Updating modified file: {file_id}")
-                        # Delete the old version
-                        collection.delete(ids=[file_id])
-                    else:
-                        logger.debug(f"Processing new file: {file_id}")
+                qdrant_db.upsert_vectors(points=points)
 
-                    # Process the file
-                    with open(file_path, "r", encoding="utf-8") as f:
-                        text = f.read()
-                        start = 0
-                        chunks = []
-                        while start < len(text):
-                            end = start + MAX_CHARS
-                            chunks.append(text[start:end])
-                            start += MAX_CHARS - OVERLAP
+    import pdb
 
-        if total_documents > 0:
-            result_msg = f"Local knowledge base updated: {processed_repos} repositories processed, {total_documents} total files indexed, {total_updated} updated, {total_skipped} skipped (unchanged), {test_skipped} test files skipped. Completed in {duration:.2f} seconds."
-            logger.info(result_msg)
-            return result_msg
-        else:
-            result_msg = f"No new or modified files found in any local repository. Supported extensions: {', '.join(PROCESS_FILE_EXTENSIONS)}. {test_skipped} test files were skipped. Process completed in {duration:.2f} seconds."
-            logger.info(result_msg)
-            return result_msg
-    except Exception as e:
-        logger.error(f"Error building knowledge base: {str(e)}", exc_info=True)
-        return f"Error building knowledge base: {str(e)}"
+    pdb.set_trace()
 
 
 def main():
