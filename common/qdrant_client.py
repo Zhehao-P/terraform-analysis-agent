@@ -2,7 +2,7 @@
 Qdrant vector database client implementation.
 
 This module provides a client class for interacting with Qdrant vector database,
-handling operations like collection management, vector storage, and search.
+handling operations like collection management, vector storage, and query.
 """
 
 import os
@@ -73,7 +73,8 @@ class QdrantDB:
     Client for interacting with Qdrant vector database.
 
     This class provides methods for managing collections, indexes, and vector operations
-    in a Qdrant database. It handles vector storage, search, and filtering operations.
+    in a Qdrant database. It handles vector storage, query, and filtering operations.
+    Supports both production (server-based) and debug (in-memory) modes.
     """
 
     def __init__(
@@ -82,17 +83,23 @@ class QdrantDB:
         port: int = int(os.getenv("QDRANT_PORT") or "6333"),
         collection_name: str = os.getenv("QDRANT_COLLECTION_NAME") or "knowledge_db",
         embed_fn: callable = None,
+        debug: bool = False,
     ):
         """
         Initialize QdrantDB client with configuration.
 
         Args:
-            host: Qdrant server host
-            port: Qdrant server port
+            host: Qdrant server host (ignored in debug mode)
+            port: Qdrant server port (ignored in debug mode)
             collection_name: Name of the collection to use
             embed_fn: Optional async embedding function
+            debug: If True, uses an in-memory client for testing/debugging
         """
-        self.client = QdrantClient(host=host, port=port)
+        if debug:
+            self.client = QdrantClient(":memory:")
+            logger.info("Using in-memory Qdrant client for debugging")
+        else:
+            self.client = QdrantClient(host=host, port=port)
         self.collection_name = collection_name
         self.embed_fn = embed_fn
         self.collection = self._ensure_collection()
@@ -148,20 +155,20 @@ class QdrantDB:
         """
         return self.client.upsert(collection_name=self.collection_name, points=points)
 
-    def search_vectors(
+    def query_vectors(
         self,
         query_vector: Optional[list[float]] = None,
         metadata_filter: Optional[Filter] = None,
     ) -> Optional[str]:
         """
-        Search for content in the database using either vector similarity or metadata filters.
+        Query for content in the database using either vector similarity or metadata filters.
 
-        This method performs a search in the Qdrant database using either a vector similarity
-        search or metadata-based filtering. It returns the file path of the first matching
+        This method performs a query in the Qdrant database using either a vector similarity
+        query or metadata-based filtering. It returns the file path of the first matching
         result, or None if no matches are found.
 
         Args:
-            query_vector: Vector to search for (optional)
+            query_vector: Vector to query for (optional)
             metadata_filter: Filter conditions (optional)
 
         Returns:
@@ -173,16 +180,15 @@ class QdrantDB:
         if query_vector is None and metadata_filter is None:
             raise ValueError("Either query_vector or metadata_filter must be provided")
 
-        result = self.client.search(
+        results = self.client.query_points(
             collection_name=self.collection_name,
-            query_vector=query_vector,
+            query=query_vector,
             query_filter=metadata_filter,
-        )
-        if result is None:
+        ).points
+        if len(results) == 0:
             return None
 
-        result = result.to_dict()
-        return result.get("payload", {}).get(PayloadField.FILE_PATH.field_name)
+        return results[0].payload.get(PayloadField.FILE_PATH.field_name)
 
     def check_metadata_exists(self, metadata_filter: Filter) -> bool:
         """
