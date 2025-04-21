@@ -100,9 +100,11 @@ class QdrantDB:
             logger.info("Using in-memory Qdrant client for debugging")
         else:
             self.client = QdrantClient(host=host, port=port)
+            logger.info(f"Using Qdrant server at {host}:{port}")
         self.collection_name = collection_name
         self.embed_fn = embed_fn
         self.collection = self._ensure_collection()
+        logger.info("QdrantDB client initialized successfully")
 
     def _ensure_collection(
         self, vector_size: int = DIMENSIONS

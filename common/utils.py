@@ -20,7 +20,7 @@ def setup_logging(module_name="terraform-analysis") -> logging.Logger:
     Returns:
         A configured logger instance
     """
-    debug_mode = os.getenv("DEBUG") or False
+    debug_mode = os.getenv("DEBUG")
     log_level = logging.DEBUG if debug_mode else logging.INFO
 
     logger_obj = logging.getLogger(module_name)
@@ -80,8 +80,6 @@ def get_embedding_function():
         logger.error("EMBEDDING_MODEL_CHOICE environment variable not found")
         raise ValueError("EMBEDDING_MODEL_CHOICE environment variable must be set")
 
-    logger.info("Using embedding model: %s", embedding_model)
-
     # Create OpenAI client
     client = AsyncOpenAI(api_key=api_key, base_url=api_base)
 
@@ -106,4 +104,6 @@ def get_embedding_function():
         )
         return [item.embedding for item in response.data]
 
+    logger.info("Using api endpoint: %s", api_base)
+    logger.info("Using embedding model: %s", embedding_model)
     return embed_batch
