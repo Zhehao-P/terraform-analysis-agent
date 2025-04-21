@@ -1,0 +1,9 @@
+---
+description:
+globs:
+alwaysApply: true
+---
+This project is using python 3.12
+This project is using uv and .toml file for python package
+This project is using a qdrant for db storing
+This project assume the qdrant is running as a host/docker
