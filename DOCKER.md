@@ -36,18 +36,19 @@ QDRANT_PORT=6333
 
 1. Build the Docker image:
 ```bash
-docker build -t mcp/terraform-analysis-agent .
+docker build -t mcp/terraform-agent .
 ```
 
 2. Run the container:
 ```bash
 docker run -d \
   --name terraform-agent \
+  --network=host \
   -p 8000:8000 \
   --env-file .env \
   -v $(pwd)/data:/app/data \
   --restart unless-stopped \
-  mcp/terraform-analysis-agent
+  mcp/terraform-agent
 ```
 
 ## Managing the Container
