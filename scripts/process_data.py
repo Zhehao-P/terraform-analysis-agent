@@ -14,17 +14,9 @@ from pathlib import Path
 import uuid
 from dotenv import load_dotenv
 from tqdm import tqdm
-from qdrant_client.models import Filter, FieldCondition, MatchValue
-from common.utils import (
-    PayloadField,
-    QdrantDB,
-    FileType,
-    PointStruct,
-    setup_logging,
-    get_embedding_function,
-)
-
-logger = setup_logging(__name__)
+from qdrant_client.models import Filter, FieldCondition, MatchValue, PointStruct
+from common.qdrant_client import QdrantDB, PayloadField, FileType
+from common.utils import logger, get_embedding_function
 
 load_dotenv()
 

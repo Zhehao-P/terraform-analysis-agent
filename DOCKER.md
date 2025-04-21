@@ -1,10 +1,11 @@
 # Running with Docker
 
-This document explains how to run the Terraform Analysis Agent using Docker.
+This document explains how to run the Terraform Analysis Agent using Docker with an existing Qdrant instance.
 
 ## Prerequisites
 
 - Docker installed on your system
+- Qdrant instance already running
 
 ## Configuration
 
@@ -14,7 +15,7 @@ This document explains how to run the Terraform Analysis Agent using Docker.
 cp .env.example .env
 ```
 
-2. Update the `.env` file with your API credentials (all required):
+2. Update the `.env` file with your API credentials and Qdrant connection details:
 
 ```
 # API Key for embeddings
@@ -25,25 +26,20 @@ LLM_BASE_URL=https://api.openai.com/v1
 
 # Embedding model to use
 EMBEDDING_MODEL_CHOICE=text-embedding-3-small
+
+# Qdrant connection
+QDRANT_HOST=your_qdrant_host  # e.g., localhost or container name
+QDRANT_PORT=6333
 ```
 
-## Running the Container
+## Building and Running
 
+1. Build the Docker image:
 ```bash
-# Build the image
 docker build -t mcp/terraform-analysis-agent .
-
-# Run with volume mapping for data persistence
-docker run -p 8000:8000 \
-  --env-file .env \
-  -v $(pwd)/data:/app/data \
-  mcp/terraform-analysis-agent
 ```
 
-## Running in the Background
-
-For production use:
-
+2. Run the container:
 ```bash
 docker run -d \
   --name terraform-agent \
@@ -60,24 +56,34 @@ docker run -d \
 # View logs
 docker logs -f terraform-agent
 
-# Stop the container
+# Stop container
 docker stop terraform-agent
 
-# Start an existing container
+# Start container
 docker start terraform-agent
 
-# Remove the container
+# Remove container
 docker rm terraform-agent
 ```
 
-## Customizing Port
+## Connecting to Qdrant
 
-To use a different port:
+If your Qdrant is running in a different Docker container:
 
+1. Find Qdrant's network:
 ```bash
-docker run -p 9000:9000 \
-  --env PORT=9000 \
-  --env-file .env \
-  -v $(pwd)/data:/app/data \
-  mcp/terraform-analysis-agent
+# List all networks
+docker network ls
+
+# Inspect Qdrant container to find its network
+docker inspect qdrant | grep NetworkMode
 ```
+
+2. Connect to the same network:
+```bash
+docker network connect <network_name> terraform-agent
+```
+
+If your Qdrant is running on the host machine:
+- Use `host.docker.internal` as QDRANT_HOST in your .env file
+- Or use `--network host` to share the host's network namespace

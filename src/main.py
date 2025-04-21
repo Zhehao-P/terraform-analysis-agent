@@ -13,19 +13,10 @@ from pathlib import Path
 from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP, Context
 from qdrant_client.models import Filter, FieldCondition, MatchText
-from common.utils import (
-    PayloadField,
-    QdrantDB,
-    setup_logging,
-    get_embedding_function,
-)
-
-logger = setup_logging(__name__)
+from common.qdrant_client import QdrantDB, PayloadField
+from common.utils import logger, get_embedding_function
 
 load_dotenv()
-
-# Set up logging
-logger = setup_logging()
 
 # Base directory
 BASE_DIR = Path(__file__).parent.parent
