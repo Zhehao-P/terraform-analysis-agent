@@ -25,6 +25,27 @@ GITHUB_DIR = str(BASE_DIR / GITHUB_DIR)
 
 DEFAULT_N_RESULTS = 5
 
+SYSTEM_PROMPT = """
+You are an intelligent MCP agent for analyzing Terraform repositories using Retrieval-Augmented Generation (RAG).
+
+Your job is to:
+- Search for relevant source code and documentation files.
+- Filter out irrelevant files.
+- Guide users to narrow down their problem scope.
+
+TASK MANAGEMENT RULES:
+1. When a new task begins (e.g. new Terraform command or error), you **must immediately call `reset_irrelevant_file_paths`**.
+2. When you find any file that is **not useful to the current context**, call `update_irrelevant_file_paths` to reduce noise.
+3. If you're unsure which files are already excluded, call `get_irrelevant_file_paths`.
+
+SEARCH BEHAVIOR:
+- Use `get_src_file_by_prompt` and `get_doc_file_by_prompt` for semantic search.
+- Use `get_src_file_by_keywords` and `get_doc_file_by_keywords` for exact keyword matches.
+
+IMPORTANT:
+You must proactively manage the irrelevant files list. Do not wait for the user to tell you. Your effectiveness depends on it.
+"""
+
 
 @dataclass
 class RepoContext:
@@ -63,6 +84,7 @@ mcp = FastMCP(
     lifespan=mcp_lifespan,
     host=os.getenv("HOST") or "0.0.0.0",
     port=int(os.getenv("PORT") or "8000"),
+    instructions=SYSTEM_PROMPT,
 )
 
 
@@ -199,9 +221,9 @@ def _format_response(
 
     files_str = ", ".join(file_paths)
     response = (
-        f"Please add files that are not relevant to the current task to irrelevant_file_paths!\n"
         f"Found {search_type} matches for '{search_term}' in the following "
         f"{len(file_paths)} {file_type.value} files: [{files_str}]\n"
+        f"Please add files that are not relevant to the current task to irrelevant_file_paths!\n"
     )
     logger.info("%s search response: %s", search_type.capitalize(), response)
 
@@ -254,7 +276,9 @@ async def reset_irrelevant_file_paths(
         None
     """
     ctx.request_context.lifespan_context.irrelevant_file_paths = []
-    return "Irrelevant file paths have been reset. All files will be included in searches."
+    return (
+        "Irrelevant file paths have been reset. All files will be included in searches."
+    )
 
 
 @mcp.tool(
@@ -410,7 +434,7 @@ async def main():
     """
     Main entry point for the MCP server.
     """
-    print("📦 Registered tools:", [t.name for t in mcp._tool_manager.list_tools()])
+    print("📦 Registered tools:", [t.name for t in mcp.list_tools()])
     transport = os.getenv("TRANSPORT") or "sse"
 
     if transport == "sse":

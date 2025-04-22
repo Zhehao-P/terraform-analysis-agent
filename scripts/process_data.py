@@ -43,7 +43,7 @@ class FileTypeMappedExtension(Enum):
     DOCUMENT = {".md"}
 
 
-def get_file_type(file_relative_path: str) -> FileType:
+def get_file_type(file_relative_path: Path) -> FileType:
     """
     Determine the type of file based on its extension and name.
 
@@ -54,7 +54,7 @@ def get_file_type(file_relative_path: str) -> FileType:
         FileType enum value indicating the type of file
     """
     match file_relative_path.suffix:
-        case _ if "test" in file_relative_path:
+        case _ if "test" in file_relative_path.name.lower():
             return FileType.TEST
         case suffix if suffix in FileTypeMappedExtension.CODE.value:
             return FileType.CODE
@@ -84,7 +84,7 @@ async def process_file(
     """
     repo_name = repo_dir.name
     relative_path = os.path.join(repo_name, os.path.relpath(file_path, str(repo_dir)))
-    file_type = get_file_type(relative_path)
+    file_type = get_file_type(Path(relative_path))
     last_modified = datetime.datetime.fromtimestamp(
         os.path.getmtime(file_path), tz=datetime.timezone.utc
     ).isoformat()
