@@ -29,7 +29,9 @@ DEFAULT_N_RESULTS = 5
 @dataclass
 class RepoContext:
     """Context for managing repository content storage and retrieval."""
+
     db_client: QdrantDB
+    irrelevant_file_paths: list[str]
 
 
 @asynccontextmanager
@@ -47,7 +49,7 @@ async def mcp_lifespan(server: FastMCP) -> AsyncIterator[RepoContext]:
     db_client = QdrantDB(embed_fn=embed_function)
 
     try:
-        yield RepoContext(db_client=db_client)
+        yield RepoContext(db_client=db_client, irrelevant_file_paths=[])
     finally:
         db_client.client.close()
         # No explicit persistence needed - PersistentClient handles this automatically
@@ -68,7 +70,6 @@ async def _search_files(
     ctx: Context,
     file_type: str,
     n_results: int,
-    exclude_file_paths: list[str],
     prompt: Optional[str] = None,
     keywords: Optional[list[str]] = None,
 ) -> list[str]:
@@ -79,7 +80,6 @@ async def _search_files(
         ctx: Context object
         file_type: Type of file to search for
         n_results: Maximum number of results to return
-        exclude_file_paths: List of file paths to exclude
         prompt: Optional natural language prompt for semantic search
         keywords: Optional list of keywords for exact search
 
@@ -95,7 +95,9 @@ async def _search_files(
         raise ValueError("Only one of prompt or keywords should be provided")
 
     db_client = ctx.request_context.lifespan_context.db_client
-    seen_paths = set(exclude_file_paths)
+    # Use irrelevant_file_paths from RepoContext
+    irrelevant_paths = ctx.request_context.lifespan_context.irrelevant_file_paths
+    seen_paths = set(irrelevant_paths)
 
     # Log the search query
     search_term = prompt or ", ".join(keywords)
@@ -197,9 +199,9 @@ def _format_response(
 
     files_str = ", ".join(file_paths)
     response = (
+        f"Please add files that are not relevant to the current task to irrelevant_file_paths!\n"
         f"Found {search_type} matches for '{search_term}' in the following "
         f"{len(file_paths)} {file_type.value} files: [{files_str}]\n"
-        f"Please add this list of paths to exclude_file_paths in future requests: [{files_str}]\n"
     )
     logger.info("%s search response: %s", search_type.capitalize(), response)
 
@@ -219,13 +221,64 @@ def _format_response(
 
 
 @mcp.tool(
+    name="update_irrelevant_file_paths",
+    description="Update the list of file paths to exclude from future searches.",
+)
+async def update_irrelevant_file_paths(
+    ctx: Context,
+    file_paths: list[str],
+) -> str:
+    """
+    Update the list of file paths to exclude from future searches.
+    This function adds the provided file paths to the list of irrelevant file paths.
+
+    Args:
+        file_paths: List of file paths that are irrelevant to the current task
+    """
+    ctx.request_context.lifespan_context.irrelevant_file_paths.extend(file_paths)
+    return f"You are reducing the scope of the search. Well done! Updated irrelevant_file_paths with {len(file_paths)} new paths."
+
+
+@mcp.tool(
+    name="reset_irrelevant_file_paths",
+    description="Reset the list of file paths to exclude from future searches.",
+)
+async def reset_irrelevant_file_paths(
+    ctx: Context,
+) -> str:
+    """
+    Reset the list of file paths to exclude from future searches.
+    When a new task arrives, use this function to reset the list of irrelevant file paths.
+
+    Args:
+        None
+    """
+    ctx.request_context.lifespan_context.irrelevant_file_paths = []
+    return "Irrelevant file paths have been reset. All files will be included in searches."
+
+
+@mcp.tool(
+    name="get_irrelevant_file_paths",
+    description="Get the current list of file paths considered irrelevant to the task.",
+)
+async def get_irrelevant_file_paths(ctx: Context) -> list[str]:
+    """
+    Get the current list of file paths considered irrelevant to the current task.
+    These files are excluded from searches.
+
+    Returns:
+        List of irrelevant file paths
+    """
+    return ctx.request_context.lifespan_context.irrelevant_file_paths
+
+
+@mcp.tool(
     name="get_src_file_by_keywords",
     description="Get source files containing exact keyword matches.",
 )
 async def get_src_file_by_keywords(
     ctx: Context,
     keywords: list[str],
-    exclude_file_paths: list[str],
     n_results: int = DEFAULT_N_RESULTS,
 ) -> str:
     """
@@ -234,7 +287,6 @@ async def get_src_file_by_keywords(
 
     Args:
         keywords: List of exact keywords to search for in the source files.
-        exclude_file_paths: List of earlier response file paths to exclude
         n_results: Optional maximum number of files to return.
 
     Returns:
@@ -245,7 +297,6 @@ async def get_src_file_by_keywords(
             ctx,
             FileType.CODE.value,
             n_results,
-            exclude_file_paths,
             keywords=keywords,
         )
         return _format_response(file_paths, FileType.CODE, keywords=keywords)
@@ -261,7 +312,6 @@ async def get_src_file_by_keywords(
 async def get_doc_file_by_keywords(
     ctx: Context,
     keywords: list[str],
-    exclude_file_paths: list[str],
     n_results: int = DEFAULT_N_RESULTS,
 ) -> str:
     """
@@ -270,7 +320,6 @@ async def get_doc_file_by_keywords(
 
     Args:
         keywords: List of exact keywords to search for in the documentation files.
-        exclude_file_paths: List of earlier response file paths to exclude
         n_results: Optional maximum number of files to return.
 
     Returns:
@@ -281,7 +330,6 @@ async def get_doc_file_by_keywords(
             ctx,
             FileType.DOCUMENT.value,
             n_results,
-            exclude_file_paths,
             keywords=keywords,
         )
         return _format_response(file_paths, FileType.DOCUMENT, keywords=keywords)
@@ -297,7 +345,6 @@ async def get_doc_file_by_keywords(
 async def get_src_file_by_prompt(
     ctx: Context,
     prompt: str,
-    exclude_file_paths: list[str],
     n_results: int = DEFAULT_N_RESULTS,
 ) -> str:
     """
@@ -307,7 +354,6 @@ async def get_src_file_by_prompt(
 
     Args:
         prompt: Natural language description of what you're looking for.
-        exclude_file_paths: List of earlier response file paths to exclude
         n_results: Optional maximum number of files to return.
 
     Returns:
@@ -318,7 +364,6 @@ async def get_src_file_by_prompt(
             ctx,
             FileType.CODE.value,
             n_results,
-            exclude_file_paths,
             prompt=prompt,
         )
         return _format_response(file_paths, FileType.CODE, prompt=prompt)
@@ -334,7 +379,6 @@ async def get_src_file_by_prompt(
 async def get_doc_file_by_prompt(
     ctx: Context,
     prompt: str,
-    exclude_file_paths: list[str],
     n_results: int = DEFAULT_N_RESULTS,
 ) -> str:
     """
@@ -344,7 +388,6 @@ async def get_doc_file_by_prompt(
 
     Args:
         prompt: Natural language description of what you're looking for.
-        exclude_file_paths: List of earlier response file paths to exclude
         n_results: Optional maximum number of files to return.
 
     Returns:
@@ -355,7 +398,6 @@ async def get_doc_file_by_prompt(
             ctx,
             FileType.DOCUMENT.value,
             n_results,
-            exclude_file_paths,
             prompt=prompt,
         )
         return _format_response(file_paths, FileType.DOCUMENT, prompt=prompt)
