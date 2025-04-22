@@ -63,97 +63,295 @@ mcp = FastMCP(
 )
 
 
-@mcp.tool(name="get_src_file_by_name", description="Get all Terraform source files containing the input keywords.")
+async def _search_files(
+    ctx: Context,
+    file_type: str,
+    n_results: int,
+    exclude_file_paths: Optional[list[str]],
+    prompt: Optional[str] = None,
+    keywords: Optional[list[str]] = None,
+) -> list[str]:
+    """
+    Helper function to search for files with common search logic.
+
+    Args:
+        ctx: Context object
+        file_type: Type of file to search for
+        n_results: Maximum number of results to return
+        exclude_file_paths: List of file paths to exclude
+        prompt: Optional natural language prompt for semantic search
+        keywords: Optional list of keywords for exact search
+
+    Returns:
+        List of file paths found
+
+    Raises:
+        ValueError: If neither prompt nor keywords are provided
+    """
+    if prompt is None and keywords is None:
+        raise ValueError("Either prompt or keywords must be provided")
+    if prompt is not None and keywords is not None:
+        raise ValueError("Only one of prompt or keywords should be provided")
+
+    db_client = ctx.request_context.lifespan_context.db_client
+    exclude_file_paths = exclude_file_paths or []
+
+    # Log the search query
+    search_term = prompt or ", ".join(keywords)
+    logger.info(
+        "Searching for Terraform %s files: %s, requesting %d results",
+        file_type,
+        search_term,
+        n_results,
+    )
+
+    # Build the filter conditions
+    must_conditions = [
+        FieldCondition(
+            key=PayloadField.FILE_TYPE.field_name,
+            match=MatchText(text=file_type),
+        )
+    ]
+
+    if keywords is not None:
+        must_conditions.extend(
+            [
+                FieldCondition(
+                    key=PayloadField.CONTENT.field_name,
+                    match=MatchText(text=keyword),
+                )
+                for keyword in keywords
+            ]
+        )
+
+    file_paths = []
+    while len(file_paths) < n_results:
+        metadata_filter = Filter(
+            must=must_conditions,
+            must_not=[
+                FieldCondition(
+                    key=PayloadField.FILE_PATH.field_name,
+                    match=MatchText(value=file_path),
+                )
+                for file_path in exclude_file_paths
+            ],
+        )
+
+        if prompt is not None:
+            query_vector = db_client.embed_fn(prompt)
+            file_path = db_client.query_vectors(query_vector, metadata_filter)
+        else:
+            file_path = db_client.query_vectors(metadata_filter=metadata_filter)
+
+        if file_path:
+            file_paths.append(file_path)
+        else:
+            break
+
+    return file_paths
+
+
+def _format_response(
+    file_paths: list[str],
+    file_type: FileType,
+    prompt: Optional[str] = None,
+    keywords: Optional[list[str]] = None,
+) -> str:
+    """
+    Helper function to format the response message.
+
+    Args:
+        file_paths: List of file paths found
+        file_type: Type of files searched
+        prompt: Optional natural language prompt used for search
+        keywords: Optional list of keywords used for search
+
+    Returns:
+        Formatted response string
+
+    Raises:
+        ValueError: If neither prompt nor keywords are provided
+    """
+    if prompt is None and keywords is None:
+        raise ValueError("Either prompt or keywords must be provided")
+    if prompt is not None and keywords is not None:
+        raise ValueError("Only one of prompt or keywords should be provided")
+
+    search_term = prompt or ", ".join(keywords)
+    search_type = "semantic" if prompt is not None else "exact"
+
+    if len(file_paths) == 0:
+        logger.info(
+            "No %s matches found for %s: %s", search_type, file_type.value, search_term
+        )
+        return f"No {search_type} matches found for {file_type.value}: '{search_term}'. Try a different {'description' if search_type == 'semantic' else 'keywords'}."
+
+    files_str = ", ".join(file_paths)
+    response = (
+        f"Found {search_type} matches for '{search_term}' in the following {len(file_paths)} {file_type.value} files: "
+        f"[{files_str}]\n"
+    )
+    logger.info("%s search response: %s", search_type.capitalize(), response)
+
+    for file_path in file_paths:
+        try:
+            response += f"\n### File: {file_path}\n"
+            path_to_file = os.path.join(GITHUB_DIR, file_path)
+            with open(path_to_file, "r", encoding="utf-8") as f:
+                content = f.read()
+                response += content
+            response += f"\n### End of {file_path}\n"
+        except Exception as e:
+            logger.error("Error reading file %s: %s", file_path, str(e))
+            response += f"\nError reading file {file_path}: {str(e)}\n"
+
+    return response
+
+
+@mcp.tool(
+    name="get_src_file_by_name",
+    description="Get Terraform source files containing exact keyword matches.",
+)
 async def get_src_file_by_name(
     ctx: Context,
-    keywords: str,
+    keywords: list[str],
     n_results: int = 3,
     exclude_file_paths: Optional[list[str]] = None,
 ) -> str:
     """
-    Get all Terraform source files containing the input keywords appear together.
-    Try to use the exact resource name to search for Terraform source files.
+    Get Terraform source files containing exact matches of the input keywords.
+    This function performs a literal text search for the keywords in the files.
 
     Args:
-        keywords: keywords to search for in the Terraform source files.
+        keywords: List of exact keywords to search for in the Terraform source files.
         n_results: Optional maximum number of files to return.
         exclude_file_paths: Optional list of earlier response file paths to exclude
 
     Returns:
-        Pain text with the resource name highlighted in the source file.
+        Plain text containing the matching files with their content.
     """
     try:
-        db_client = ctx.request_context.lifespan_context.db_client
-        exclude_file_paths = exclude_file_paths or []
-
-        # Log the search query
-        logger.info(
-            "Searching for Terraform resource: %s, requesting %d results", keywords, n_results
+        file_paths = await _search_files(
+            ctx,
+            FileType.CODE.value,
+            n_results,
+            exclude_file_paths,
+            keywords=keywords,
         )
-
-        # Build the filter conditions for both resource definitions and usage
-        must_conditions = [
-            FieldCondition(
-                key=PayloadField.CONTENT.field_name,
-                match=MatchText(text=keywords),
-            ),
-            FieldCondition(
-                key=PayloadField.FILE_TYPE.field_name,
-                match=MatchText(text=FileType.CODE.value),
-            )
-        ]
-
-        file_paths = []
-        while len(file_paths) < n_results:
-            metadata_filter = Filter(
-                must=must_conditions,
-                must_not=[
-                    FieldCondition(
-                        key=PayloadField.FILE_PATH.field_name,
-                        match=MatchText(value=file_path),
-                    )
-                    for file_path in exclude_file_paths
-                ],
-            )
-            if file_path := db_client.query_vectors(metadata_filter=metadata_filter):
-                file_paths.append(file_path)
-            else:
-                break
-
-        # Check if we found any results
-        if len(file_paths) == 0:
-            logger.info("No files found containing resource: %s", keywords)
-            return f"No Terraform files found containing '{keywords}'. Try another resource name."
-
-        response = f"Found {len(file_paths)} files containing '{keywords}':\n"
-        # Format the response
-        for file_path in file_paths:
-            try:
-                response += f"\n### File: {file_path}\n"
-                path_to_file = os.path.join(GITHUB_DIR, file_path)
-                with open(path_to_file, "r", encoding="utf-8") as f:
-                    content = f.read()
-                    # Highlight the resource name in the content
-                    highlighted_content = content.replace(
-                        f'resource "{keywords}"',
-                        f'resource "**{keywords}**"'
-                    ).replace(
-                        f'"{keywords}."',
-                        f'"**{keywords}**."'
-                    ).replace(
-                        f'"{keywords}"',
-                        f'"**{keywords}**"'
-                    )
-                    response += highlighted_content
-                response += f"\n### End of {file_path}\n"
-            except Exception as e:
-                logger.error("Error reading file %s: %s", file_path, str(e))
-                response += f"\nError reading file {file_path}: {str(e)}\n"
-
-        return response
+        return _format_response(file_paths, FileType.CODE, keywords=keywords)
     except Exception as e:
-        logger.error("Error searching for resource: %s", str(e), exc_info=True)
-        return f"Error searching for resource: {str(e)}"
+        logger.error("Error searching for resources: %s", str(e), exc_info=True)
+        return f"Error searching for resources: {str(e)}"
+
+
+@mcp.tool(
+    name="get_doc_file_by_name",
+    description="Get Terraform documentation files containing exact keyword matches.",
+)
+async def get_doc_file_by_name(
+    ctx: Context,
+    keywords: list[str],
+    n_results: int = 3,
+    exclude_file_paths: Optional[list[str]] = None,
+) -> str:
+    """
+    Get Terraform documentation files containing exact matches of the input keywords.
+    This function performs a literal text search for the keywords in the files.
+
+    Args:
+        keywords: List of exact keywords to search for in the Terraform documentation files.
+        n_results: Optional maximum number of files to return.
+        exclude_file_paths: Optional list of earlier response file paths to exclude
+
+    Returns:
+        Plain text containing the matching files with their content.
+    """
+    try:
+        file_paths = await _search_files(
+            ctx,
+            FileType.DOCUMENT.value,
+            n_results,
+            exclude_file_paths,
+            keywords=keywords,
+        )
+        return _format_response(file_paths, FileType.DOCUMENT, keywords=keywords)
+    except Exception as e:
+        logger.error("Error searching for resources: %s", str(e), exc_info=True)
+        return f"Error searching for resources: {str(e)}"
+
+
+@mcp.tool(
+    name="get_src_file_by_prompt",
+    description="Get Terraform source files using semantic search based on the input prompt.",
+)
+async def get_src_file_by_prompt(
+    ctx: Context,
+    prompt: str,
+    n_results: int = 3,
+    exclude_file_paths: Optional[list[str]] = None,
+) -> str:
+    """
+    Get Terraform source files using semantic search based on the input prompt.
+    This function uses embeddings to find files that are semantically related to the prompt,
+    even if they don't contain exact keyword matches.
+
+    Args:
+        prompt: Natural language description of what you're looking for.
+        n_results: Optional maximum number of files to return.
+        exclude_file_paths: Optional list of earlier response file paths to exclude
+
+    Returns:
+        Plain text containing the semantically matching files with their content.
+    """
+    try:
+        file_paths = await _search_files(
+            ctx,
+            FileType.CODE.value,
+            n_results,
+            exclude_file_paths,
+            prompt=prompt,
+        )
+        return _format_response(file_paths, FileType.CODE, prompt=prompt)
+    except Exception as e:
+        logger.error("Error searching for resources: %s", str(e), exc_info=True)
+        return f"Error searching for resources: {str(e)}"
+
+
+@mcp.tool(
+    name="get_doc_file_by_prompt",
+    description="Get Terraform documentation files using semantic search based on the input prompt.",
+)
+async def get_doc_file_by_prompt(
+    ctx: Context,
+    prompt: str,
+    n_results: int = 3,
+    exclude_file_paths: Optional[list[str]] = None,
+) -> str:
+    """
+    Get Terraform documentation files using semantic search based on the input prompt.
+    This function uses embeddings to find files that are semantically related to the prompt,
+    even if they don't contain exact keyword matches.
+
+    Args:
+        prompt: Natural language description of what you're looking for.
+        n_results: Optional maximum number of files to return.
+        exclude_file_paths: Optional list of earlier response file paths to exclude
+
+    Returns:
+        Plain text containing the semantically matching files with their content.
+    """
+    try:
+        file_paths = await _search_files(
+            ctx,
+            FileType.DOCUMENT.value,
+            n_results,
+            exclude_file_paths,
+            prompt=prompt,
+        )
+        return _format_response(file_paths, FileType.DOCUMENT, prompt=prompt)
+    except Exception as e:
+        logger.error("Error searching for resources: %s", str(e), exc_info=True)
+        return f"Error searching for resources: {str(e)}"
 
 
 async def main():

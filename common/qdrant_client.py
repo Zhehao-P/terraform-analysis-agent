@@ -106,9 +106,7 @@ class QdrantDB:
         self.collection = self._ensure_collection()
         logger.info("QdrantDB client initialized successfully")
 
-    def _ensure_collection(
-        self, vector_size: int = DIMENSIONS
-    ):
+    def _ensure_collection(self, vector_size: int = DIMENSIONS):
         """
         Ensure the collection exists with correct configuration.
         Only creates the collection if it doesn't exist.

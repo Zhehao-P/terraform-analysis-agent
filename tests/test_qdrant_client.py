@@ -4,6 +4,7 @@ Tests for the QdrantDB class.
 This module contains tests for the QdrantDB class using an ephemeral in-memory database.
 Tests are run in debug mode to avoid requiring a running Qdrant server.
 """
+
 # pylint: disable=redefined-outer-name
 
 import uuid

@@ -10,6 +10,7 @@ from openai import AsyncOpenAI
 
 DIMENSIONS = int(os.getenv("EMBEDDING_DIMENSIONS") or "1024")
 
+
 def setup_logging(module_name="terraform-analysis") -> logging.Logger:
     """
     Set up basic logging configuration.
@@ -65,7 +66,6 @@ def get_embedding_function():
     api_key = os.getenv("LLM_API_KEY")
     api_base = os.getenv("LLM_BASE_URL")
     embedding_model = os.getenv("EMBEDDING_MODEL_CHOICE")
-
 
     # Validate required configuration
     if not api_key:
