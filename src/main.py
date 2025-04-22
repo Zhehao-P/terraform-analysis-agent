@@ -12,7 +12,7 @@ from typing import Optional
 from pathlib import Path
 from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP, Context
-from qdrant_client.models import Filter, FieldCondition, MatchText
+from qdrant_client.models import Filter, FieldCondition, MatchText, MatchValue
 from common.qdrant_client import QdrantDB, PayloadField, FileType
 from common.utils import logger, get_embedding_function
 
@@ -29,7 +29,6 @@ DEFAULT_N_RESULTS = 5
 @dataclass
 class RepoContext:
     """Context for managing repository content storage and retrieval."""
-
     db_client: QdrantDB
 
 
@@ -69,7 +68,7 @@ async def _search_files(
     ctx: Context,
     file_type: str,
     n_results: int,
-    exclude_file_paths: Optional[list[str]],
+    exclude_file_paths: list[str],
     prompt: Optional[str] = None,
     keywords: Optional[list[str]] = None,
 ) -> list[str]:
@@ -96,7 +95,7 @@ async def _search_files(
         raise ValueError("Only one of prompt or keywords should be provided")
 
     db_client = ctx.request_context.lifespan_context.db_client
-    seen_paths = set(exclude_file_paths or [])
+    seen_paths = set(exclude_file_paths)
 
     # Log the search query
     search_term = prompt or ", ".join(keywords)
@@ -134,7 +133,7 @@ async def _search_files(
             must_not=[
                 FieldCondition(
                     key=PayloadField.FILE_PATH.field_name,
-                    match=MatchText(value=file_path),
+                    match=MatchValue(value=file_path),
                 )
                 for file_path in seen_paths
             ],
@@ -200,6 +199,7 @@ def _format_response(
     response = (
         f"Found {search_type} matches for '{search_term}' in the following "
         f"{len(file_paths)} {file_type.value} files: [{files_str}]\n"
+        f"Please add this list of paths to exclude_file_paths in future requests: [{files_str}]\n"
     )
     logger.info("%s search response: %s", search_type.capitalize(), response)
 
@@ -225,8 +225,8 @@ def _format_response(
 async def get_src_file_by_keywords(
     ctx: Context,
     keywords: list[str],
+    exclude_file_paths: list[str],
     n_results: int = DEFAULT_N_RESULTS,
-    exclude_file_paths: Optional[list[str]] = None,
 ) -> str:
     """
     Get source files containing exact matches of the input keywords.
@@ -234,8 +234,8 @@ async def get_src_file_by_keywords(
 
     Args:
         keywords: List of exact keywords to search for in the source files.
+        exclude_file_paths: List of earlier response file paths to exclude
         n_results: Optional maximum number of files to return.
-        exclude_file_paths: Optional list of earlier response file paths to exclude
 
     Returns:
         Plain text containing the matching files with their content.
@@ -261,8 +261,8 @@ async def get_src_file_by_keywords(
 async def get_doc_file_by_keywords(
     ctx: Context,
     keywords: list[str],
+    exclude_file_paths: list[str],
     n_results: int = DEFAULT_N_RESULTS,
-    exclude_file_paths: Optional[list[str]] = None,
 ) -> str:
     """
     Get documentation files containing exact matches of the input keywords.
@@ -270,8 +270,8 @@ async def get_doc_file_by_keywords(
 
     Args:
         keywords: List of exact keywords to search for in the documentation files.
+        exclude_file_paths: List of earlier response file paths to exclude
         n_results: Optional maximum number of files to return.
-        exclude_file_paths: Optional list of earlier response file paths to exclude
 
     Returns:
         Plain text containing the matching files with their content.
@@ -297,8 +297,8 @@ async def get_doc_file_by_keywords(
 async def get_src_file_by_prompt(
     ctx: Context,
     prompt: str,
+    exclude_file_paths: list[str],
     n_results: int = DEFAULT_N_RESULTS,
-    exclude_file_paths: Optional[list[str]] = None,
 ) -> str:
     """
     Get source files using semantic search based on the input prompt.
@@ -307,8 +307,8 @@ async def get_src_file_by_prompt(
 
     Args:
         prompt: Natural language description of what you're looking for.
+        exclude_file_paths: List of earlier response file paths to exclude
         n_results: Optional maximum number of files to return.
-        exclude_file_paths: Optional list of earlier response file paths to exclude
 
     Returns:
         Plain text containing the semantically matching files with their content.
@@ -334,8 +334,8 @@ async def get_src_file_by_prompt(
 async def get_doc_file_by_prompt(
     ctx: Context,
     prompt: str,
+    exclude_file_paths: list[str],
     n_results: int = DEFAULT_N_RESULTS,
-    exclude_file_paths: Optional[list[str]] = None,
 ) -> str:
     """
     Get documentation files using semantic search based on the input prompt.
@@ -344,8 +344,8 @@ async def get_doc_file_by_prompt(
 
     Args:
         prompt: Natural language description of what you're looking for.
+        exclude_file_paths: List of earlier response file paths to exclude
         n_results: Optional maximum number of files to return.
-        exclude_file_paths: Optional list of earlier response file paths to exclude
 
     Returns:
         Plain text containing the semantically matching files with their content.
