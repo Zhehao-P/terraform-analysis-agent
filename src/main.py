@@ -23,6 +23,8 @@ BASE_DIR = Path(__file__).parent.parent
 GITHUB_DIR = os.getenv("GITHUB_DIR", "data/github")
 GITHUB_DIR = str(BASE_DIR / GITHUB_DIR)
 
+DEFAULT_N_RESULTS = 5
+
 
 @dataclass
 class RepoContext:
@@ -99,7 +101,7 @@ async def _search_files(
     # Log the search query
     search_term = prompt or ", ".join(keywords)
     logger.info(
-        "Searching for Terraform %s files: %s, requesting %d results",
+        "Searching for %s files: %s, requesting %d results",
         file_type,
         search_term,
         n_results,
@@ -138,7 +140,7 @@ async def _search_files(
         )
 
         if prompt is not None:
-            query_vector = db_client.embed_fn(prompt)
+            query_vector = await db_client.embed_fn(prompt)
             file_path = db_client.query_vectors(query_vector, metadata_filter)
         else:
             file_path = db_client.query_vectors(metadata_filter=metadata_filter)
@@ -215,13 +217,13 @@ def _format_response(
 
 
 @mcp.tool(
-    name="get_src_file_by_name",
+    name="get_src_file_by_keywords",
     description="Get source files containing exact keyword matches.",
 )
-async def get_src_file_by_name(
+async def get_src_file_by_keywords(
     ctx: Context,
     keywords: list[str],
-    n_results: int = 3,
+    n_results: int = DEFAULT_N_RESULTS,
     exclude_file_paths: Optional[list[str]] = None,
 ) -> str:
     """
@@ -251,13 +253,13 @@ async def get_src_file_by_name(
 
 
 @mcp.tool(
-    name="get_doc_file_by_name",
+    name="get_doc_file_by_keywords",
     description="Get documentation files containing exact keyword matches.",
 )
-async def get_doc_file_by_name(
+async def get_doc_file_by_keywords(
     ctx: Context,
     keywords: list[str],
-    n_results: int = 3,
+    n_results: int = DEFAULT_N_RESULTS,
     exclude_file_paths: Optional[list[str]] = None,
 ) -> str:
     """
@@ -293,7 +295,7 @@ async def get_doc_file_by_name(
 async def get_src_file_by_prompt(
     ctx: Context,
     prompt: str,
-    n_results: int = 3,
+    n_results: int = DEFAULT_N_RESULTS,
     exclude_file_paths: Optional[list[str]] = None,
 ) -> str:
     """
@@ -330,7 +332,7 @@ async def get_src_file_by_prompt(
 async def get_doc_file_by_prompt(
     ctx: Context,
     prompt: str,
-    n_results: int = 3,
+    n_results: int = DEFAULT_N_RESULTS,
     exclude_file_paths: Optional[list[str]] = None,
 ) -> str:
     """
