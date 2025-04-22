@@ -182,14 +182,20 @@ def _format_response(
 
     if len(file_paths) == 0:
         logger.info(
-            "No %s matches found for %s: %s", search_type, file_type.value, search_term
+            "No %s matches found for %s: %s",
+            search_type,
+            file_type.value,
+            search_term,
         )
-        return f"No {search_type} matches found for {file_type.value}: '{search_term}'. Try a different {'description' if search_type == 'semantic' else 'keywords'}."
+        return (
+            f"No {search_type} matches found for {file_type.value}: '{search_term}'. "
+            f"Try a different {'description' if search_type == 'semantic' else 'keywords'}."
+        )
 
     files_str = ", ".join(file_paths)
     response = (
-        f"Found {search_type} matches for '{search_term}' in the following {len(file_paths)} {file_type.value} files: "
-        f"[{files_str}]\n"
+        f"Found {search_type} matches for '{search_term}' in the following "
+        f"{len(file_paths)} {file_type.value} files: [{files_str}]\n"
     )
     logger.info("%s search response: %s", search_type.capitalize(), response)
 
@@ -210,7 +216,7 @@ def _format_response(
 
 @mcp.tool(
     name="get_src_file_by_name",
-    description="Get Terraform source files containing exact keyword matches.",
+    description="Get source files containing exact keyword matches.",
 )
 async def get_src_file_by_name(
     ctx: Context,
@@ -219,11 +225,11 @@ async def get_src_file_by_name(
     exclude_file_paths: Optional[list[str]] = None,
 ) -> str:
     """
-    Get Terraform source files containing exact matches of the input keywords.
+    Get source files containing exact matches of the input keywords.
     This function performs a literal text search for the keywords in the files.
 
     Args:
-        keywords: List of exact keywords to search for in the Terraform source files.
+        keywords: List of exact keywords to search for in the source files.
         n_results: Optional maximum number of files to return.
         exclude_file_paths: Optional list of earlier response file paths to exclude
 
@@ -246,7 +252,7 @@ async def get_src_file_by_name(
 
 @mcp.tool(
     name="get_doc_file_by_name",
-    description="Get Terraform documentation files containing exact keyword matches.",
+    description="Get documentation files containing exact keyword matches.",
 )
 async def get_doc_file_by_name(
     ctx: Context,
@@ -255,11 +261,11 @@ async def get_doc_file_by_name(
     exclude_file_paths: Optional[list[str]] = None,
 ) -> str:
     """
-    Get Terraform documentation files containing exact matches of the input keywords.
+    Get documentation files containing exact matches of the input keywords.
     This function performs a literal text search for the keywords in the files.
 
     Args:
-        keywords: List of exact keywords to search for in the Terraform documentation files.
+        keywords: List of exact keywords to search for in the documentation files.
         n_results: Optional maximum number of files to return.
         exclude_file_paths: Optional list of earlier response file paths to exclude
 
@@ -282,7 +288,7 @@ async def get_doc_file_by_name(
 
 @mcp.tool(
     name="get_src_file_by_prompt",
-    description="Get Terraform source files using semantic search based on the input prompt.",
+    description="Get source files using semantic search based on the input prompt.",
 )
 async def get_src_file_by_prompt(
     ctx: Context,
@@ -291,7 +297,7 @@ async def get_src_file_by_prompt(
     exclude_file_paths: Optional[list[str]] = None,
 ) -> str:
     """
-    Get Terraform source files using semantic search based on the input prompt.
+    Get source files using semantic search based on the input prompt.
     This function uses embeddings to find files that are semantically related to the prompt,
     even if they don't contain exact keyword matches.
 
@@ -319,7 +325,7 @@ async def get_src_file_by_prompt(
 
 @mcp.tool(
     name="get_doc_file_by_prompt",
-    description="Get Terraform documentation files using semantic search based on the input prompt.",
+    description="Get documentation files using semantic search based on the input prompt.",
 )
 async def get_doc_file_by_prompt(
     ctx: Context,
@@ -328,7 +334,7 @@ async def get_doc_file_by_prompt(
     exclude_file_paths: Optional[list[str]] = None,
 ) -> str:
     """
-    Get Terraform documentation files using semantic search based on the input prompt.
+    Get documentation files using semantic search based on the input prompt.
     This function uses embeddings to find files that are semantically related to the prompt,
     even if they don't contain exact keyword matches.
 
