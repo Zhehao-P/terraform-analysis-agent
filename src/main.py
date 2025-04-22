@@ -96,7 +96,7 @@ async def _search_files(
         raise ValueError("Only one of prompt or keywords should be provided")
 
     db_client = ctx.request_context.lifespan_context.db_client
-    exclude_file_paths = exclude_file_paths or []
+    seen_paths = set(exclude_file_paths or [])
 
     # Log the search query
     search_term = prompt or ", ".join(keywords)
@@ -127,6 +127,7 @@ async def _search_files(
         )
 
     file_paths = []
+
     while len(file_paths) < n_results:
         metadata_filter = Filter(
             must=must_conditions,
@@ -135,18 +136,19 @@ async def _search_files(
                     key=PayloadField.FILE_PATH.field_name,
                     match=MatchText(value=file_path),
                 )
-                for file_path in exclude_file_paths
+                for file_path in seen_paths
             ],
         )
 
         if prompt is not None:
             query_vector = await db_client.embed_fn(prompt)
-            file_path = db_client.query_vectors(query_vector, metadata_filter)
+            file_path = db_client.query_vectors(query_vector[0], metadata_filter)
         else:
             file_path = db_client.query_vectors(metadata_filter=metadata_filter)
 
         if file_path:
             file_paths.append(file_path)
+            seen_paths.add(file_path)
         else:
             break
 
