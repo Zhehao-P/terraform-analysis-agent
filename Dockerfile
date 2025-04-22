@@ -1,8 +1,5 @@
 FROM python:3.12-slim
 
-ARG PORT=8050
-ARG HOST=0.0.0.0
-
 # Set working directory
 WORKDIR /app
 
