@@ -23,7 +23,7 @@ BASE_DIR = Path(__file__).parent.parent
 GITHUB_DIR = os.getenv("GITHUB_DIR", "data/github")
 GITHUB_DIR = str(BASE_DIR / GITHUB_DIR)
 
-DEFAULT_N_RESULTS = 5
+DEFAULT_N_RESULTS = 3
 
 SYSTEM_PROMPT = """
 You are an intelligent MCP agent for analyzing Terraform repositories using Retrieval-Augmented Generation (RAG).
@@ -39,8 +39,8 @@ TASK MANAGEMENT RULES:
 3. If you're unsure which files are already excluded, call `get_irrelevant_file_paths`.
 
 SEARCH BEHAVIOR:
-- Use `get_src_file_by_prompt` and `get_doc_file_by_prompt` for semantic search.
-- Use `get_src_file_by_keywords` and `get_doc_file_by_keywords` for exact keyword matches.
+- Use `search_src_files_by_prompt` and `search_doc_files_by_prompt` for semantic search.
+- Use `search_src_files_by_keywords` and `search_doc_files_by_keywords` for exact keyword matches.
 
 IMPORTANT:
 You must proactively manage the irrelevant files list. Do not wait for the user to tell you. Your effectiveness depends on it.
@@ -119,7 +119,6 @@ async def _search_files(
     db_client = ctx.request_context.lifespan_context.db_client
     # Use irrelevant_file_paths from RepoContext
     irrelevant_paths = ctx.request_context.lifespan_context.irrelevant_file_paths
-    seen_paths = set(irrelevant_paths)
 
     # Log the search query
     search_term = prompt or ", ".join(keywords)
@@ -159,7 +158,7 @@ async def _search_files(
                     key=PayloadField.FILE_PATH.field_name,
                     match=MatchValue(value=file_path),
                 )
-                for file_path in seen_paths
+                for file_path in irrelevant_paths
             ],
         )
 
@@ -171,7 +170,7 @@ async def _search_files(
 
         if file_path:
             file_paths.append(file_path)
-            seen_paths.add(file_path)
+            irrelevant_paths.add(file_path)
         else:
             break
 
@@ -243,25 +242,6 @@ def _format_response(
 
 
 @mcp.tool(
-    name="update_irrelevant_file_paths",
-    description="Update the list of file paths to exclude from future searches.",
-)
-async def update_irrelevant_file_paths(
-    ctx: Context,
-    file_paths: list[str],
-) -> str:
-    """
-    Update the list of file paths to exclude from future searches.
-    This function adds the provided file paths to the list of irrelevant file paths.
-
-    Args:
-        file_paths: List of file paths that are irrelevant to the current task
-    """
-    ctx.request_context.lifespan_context.irrelevant_file_paths.extend(file_paths)
-    return f"You are reducing the scope of the search. Well done! Updated irrelevant_file_paths with {len(file_paths)} new paths."
-
-
-@mcp.tool(
     name="reset_irrelevant_file_paths",
     description="Reset the list of file paths to exclude from future searches.",
 )
@@ -282,25 +262,10 @@ async def reset_irrelevant_file_paths(
 
 
 @mcp.tool(
-    name="get_irrelevant_file_paths",
-    description="Get the current list of file paths considered irrelevant to the task.",
-)
-async def get_irrelevant_file_paths(ctx: Context) -> list[str]:
-    """
-    Get the current list of file paths considered irrelevant to the current task.
-    These files are excluded from searches.
-
-    Returns:
-        List of irrelevant file paths
-    """
-    return ctx.request_context.lifespan_context.irrelevant_file_paths
-
-
-@mcp.tool(
-    name="get_src_file_by_keywords",
+    name="search_src_files_by_keywords",
     description="Get source files containing exact keyword matches.",
 )
-async def get_src_file_by_keywords(
+async def search_src_files_by_keywords(
     ctx: Context,
     keywords: list[str],
     n_results: int = DEFAULT_N_RESULTS,
@@ -330,10 +295,10 @@ async def get_src_file_by_keywords(
 
 
 @mcp.tool(
-    name="get_doc_file_by_keywords",
+    name="search_doc_files_by_keywords",
     description="Get documentation files containing exact keyword matches.",
 )
-async def get_doc_file_by_keywords(
+async def search_doc_files_by_keywords(
     ctx: Context,
     keywords: list[str],
     n_results: int = DEFAULT_N_RESULTS,
@@ -363,10 +328,10 @@ async def get_doc_file_by_keywords(
 
 
 @mcp.tool(
-    name="get_src_file_by_prompt",
+    name="search_src_files_by_prompt",
     description="Get source files using semantic search based on the input prompt.",
 )
-async def get_src_file_by_prompt(
+async def search_src_files_by_prompt(
     ctx: Context,
     prompt: str,
     n_results: int = DEFAULT_N_RESULTS,
@@ -397,10 +362,10 @@ async def get_src_file_by_prompt(
 
 
 @mcp.tool(
-    name="get_doc_file_by_prompt",
+    name="search_doc_files_by_prompt",
     description="Get documentation files using semantic search based on the input prompt.",
 )
-async def get_doc_file_by_prompt(
+async def search_doc_files_by_prompt(
     ctx: Context,
     prompt: str,
     n_results: int = DEFAULT_N_RESULTS,
@@ -434,7 +399,8 @@ async def main():
     """
     Main entry point for the MCP server.
     """
-    print("📦 Registered tools:", [t.name for t in mcp.list_tools()])
+    mcp_tools = await mcp.list_tools()
+    print("📦 Registered tools:", [t.name for t in mcp_tools])
     transport = os.getenv("TRANSPORT") or "sse"
 
     if transport == "sse":
