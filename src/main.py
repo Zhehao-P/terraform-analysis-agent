@@ -7,7 +7,7 @@ import os
 import asyncio
 from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 from pathlib import Path
 from dotenv import load_dotenv
@@ -52,7 +52,8 @@ class RepoContext:
     """Context for managing repository content storage and retrieval."""
 
     db_client: QdrantDB
-    irrelevant_file_paths: list[str]
+    irrelevant_file_paths: set[str]
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
 @asynccontextmanager
@@ -70,7 +71,7 @@ async def mcp_lifespan(server: FastMCP) -> AsyncIterator[RepoContext]:
     db_client = QdrantDB(embed_fn=embed_function)
 
     try:
-        yield RepoContext(db_client=db_client, irrelevant_file_paths=[])
+        yield RepoContext(db_client=db_client, irrelevant_file_paths=set())
     finally:
         db_client.client.close()
         # No explicit persistence needed - PersistentClient handles this automatically
@@ -109,16 +110,30 @@ async def _search_files(
         List of file paths found
 
     Raises:
-        ValueError: If neither prompt nor keywords are provided
+        ValueError: If neither prompt nor keywords are provided, or if inputs are invalid
+        RuntimeError: If database query fails
     """
     if prompt is None and keywords is None:
         raise ValueError("Either prompt or keywords must be provided")
     if prompt is not None and keywords is not None:
         raise ValueError("Only one of prompt or keywords should be provided")
 
+    # Validate inputs
+    if prompt is not None and not prompt.strip():
+        raise ValueError("Prompt cannot be empty")
+    if keywords is not None:
+        if not keywords:
+            raise ValueError("Keywords list cannot be empty")
+        if any(not keyword.strip() for keyword in keywords):
+            raise ValueError("Keywords cannot be empty strings")
+
+    if n_results <= 0:
+        raise ValueError("n_results must be positive")
+
     db_client = ctx.request_context.lifespan_context.db_client
     # Use irrelevant_file_paths from RepoContext
     irrelevant_paths = ctx.request_context.lifespan_context.irrelevant_file_paths
+    lock = ctx.request_context.lifespan_context.lock
 
     # Log the search query
     search_term = prompt or ", ".join(keywords)
@@ -150,31 +165,41 @@ async def _search_files(
 
     file_paths = []
 
-    while len(file_paths) < n_results:
-        metadata_filter = Filter(
-            must=must_conditions,
-            must_not=[
-                FieldCondition(
-                    key=PayloadField.FILE_PATH.field_name,
-                    match=MatchValue(value=file_path),
+    try:
+        while len(file_paths) < n_results:
+            async with lock:
+                metadata_filter = Filter(
+                    must=must_conditions,
+                    must_not=[
+                        FieldCondition(
+                            key=PayloadField.FILE_PATH.field_name,
+                            match=MatchValue(value=file_path),
+                        )
+                        for file_path in irrelevant_paths
+                    ],
                 )
-                for file_path in irrelevant_paths
-            ],
-        )
 
-        if prompt is not None:
-            query_vector = await db_client.embed_fn(prompt)
-            file_path = db_client.query_vectors(query_vector[0], metadata_filter)
-        else:
-            file_path = db_client.query_vectors(metadata_filter=metadata_filter)
+            if prompt is not None:
+                query_vector = await db_client.embed_fn(prompt)
+                if not query_vector or not query_vector[0]:
+                    raise RuntimeError("Failed to generate embedding vector")
+                file_path = db_client.query_vectors(query_vector[0], metadata_filter)
+            else:
+                file_path = db_client.query_vectors(metadata_filter=metadata_filter)
 
-        if file_path:
-            file_paths.append(file_path)
-            irrelevant_paths.add(file_path)
-        else:
-            break
+            if file_path:
+                if not isinstance(file_path, str):
+                    logger.warning("Unexpected file_path type: %s", type(file_path))
+                    continue
+                file_paths.append(file_path)
+                async with lock:
+                    irrelevant_paths.add(file_path)
+            else:
+                break
 
-    return file_paths
+        return file_paths
+    except Exception as e:
+        logger.error("Error during file search: %s", str(e))
 
 
 def _format_response(
@@ -226,10 +251,24 @@ def _format_response(
     )
     logger.info("%s search response: %s", search_type.capitalize(), response)
 
+    # Maximum file size to read (5MB)
+    MAX_FILE_SIZE = 10 * 1024 * 1024
+
     for file_path in file_paths:
         try:
-            response += f"\n### File: {file_path}\n"
             path_to_file = os.path.join(GITHUB_DIR, file_path)
+            if not os.path.exists(path_to_file):
+                logger.error("File does not exist: %s", path_to_file)
+                response += f"\nError: File {file_path} does not exist\n"
+                continue
+
+            file_size = os.path.getsize(path_to_file)
+            if file_size > MAX_FILE_SIZE:
+                logger.warning("File too large (%d bytes): %s", file_size, path_to_file)
+                response += f"\nWarning: File {file_path} is too large ({file_size} bytes) to display\n"
+                continue
+
+            response += f"\n### File: {file_path}\n"
             with open(path_to_file, "r", encoding="utf-8") as f:
                 content = f.read()
                 response += content
@@ -255,7 +294,8 @@ async def reset_irrelevant_file_paths(
     Args:
         None
     """
-    ctx.request_context.lifespan_context.irrelevant_file_paths = []
+    async with ctx.request_context.lifespan_context.lock:
+        ctx.request_context.lifespan_context.irrelevant_file_paths = set()
     return (
         "Irrelevant file paths have been reset. All files will be included in searches."
     )
